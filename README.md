@@ -4,6 +4,8 @@ Source repository: [Dev-Sinha13/Sound-Bridge](https://github.com/Dev-Sinha13/Sou
 
 Local natural-language audio search and reproducible experiments connecting frozen audio and text encoders.
 
+Completed real-audio measurements and their evaluation limits are recorded in [the results report](docs/results.md).
+
 ## What is built
 
 - CLAP baseline with real local inference, overlapping windows, timestamped playback, incremental content-hash indexing, and temporal duplicate suppression.
@@ -15,7 +17,8 @@ Local natural-language audio search and reproducible experiments connecting froz
 ## Quick start (Windows PowerShell)
 
 ```powershell
-cd C:\Users\devsi\personal_projects\sonic_bridge
+git clone https://github.com/Dev-Sinha13/Sound-Bridge.git
+cd Sound-Bridge
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev,models]"
 .\.venv\Scripts\python.exe -m sonic_bridge serve
@@ -26,6 +29,8 @@ Open **http://127.0.0.1:8765**. Enter an audio folder, name a collection, index 
 After installation, `./start.ps1` launches CLAP; `./start.ps1 -Backend demo` launches the fixture mode. `requirements-lock.txt` captures the development environment's exact package versions (Windows, Python 3.13); use the ranges in `pyproject.toml` for other platforms, and verify matching PyTorch audio/vision compatibility when changing versions.
 
 The app listens only on loopback. It does not upload audio, create transcripts, or call an inference API. Hugging Face model downloads occur on first use; model cache defaults to `.cache/huggingface` inside this project. Set `HF_HOME` to choose another cache. Indexes contain local paths and embeddings and should be treated as sensitive.
+
+After downloading Clotho, create a small local example collection with `python scripts/seed_example_library.py`. Its `data/example_library/credits.json` retains the original recording attribution and licenses. Index that folder as `clotho-examples` and try `paper crumpling`. The example audio and captions stay local and are excluded from Git.
 
 ### Lightweight synthetic demo
 
