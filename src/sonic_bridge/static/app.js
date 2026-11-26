@@ -80,7 +80,7 @@ async function refresh() {
   if (polling) return; polling = true;
   try {
     state = await request('/api/state');
-    $('mode').textContent = state.synthetic ? 'SYNTHETIC DEMO / Only low, mid, and high tone queries are supported. This verifies the pipeline; it is not a semantic audio model.' : `${state.backend.toUpperCase()} / Local inference · ${state.offline ? 'cached models only' : 'model files may download on first use'} · similarity scores are not probabilities`;
+    $('mode').textContent = state.synthetic ? 'SYNTHETIC DEMO / Only low, mid, and high tone queries are supported. This verifies the pipeline; it is not a semantic audio model.' : `${state.backend.toUpperCase()} / ${state.synthetic_alignment ? 'Synthetic calibration fixture · ' : ''}Local inference · ${state.offline ? 'cached models only' : 'model files may download on first use'} · similarity scores are not probabilities`;
     $('demo').hidden = !state.synthetic;
     $('use-clap').hidden = state.backend !== 'aligned';
     if (state.backend !== previousBackend) {
@@ -93,7 +93,7 @@ async function refresh() {
       backendInitialized = true;
     }
     const selected = $('collection').value;
-    const compatible = state.indexes.filter(i => i.settings && i.settings.encoder.backend === state.backend);
+    const compatible = state.indexes.filter(i => i.settings && (i.compatible ?? i.settings.encoder.backend === state.backend));
     $('collection').replaceChildren(...compatible.map(i => { const o = el('option', `${i.name} · ${i.files} recordings · ${i.segments} windows`); o.value = i.name; return o; }));
     if (compatible.some(i => i.name === selected)) $('collection').value = selected;
     if (!compatible.length) { const option = el('option', 'No collections yet'); option.value = ''; $('collection').append(option); }

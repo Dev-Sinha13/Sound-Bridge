@@ -2,8 +2,10 @@
 import argparse
 import json
 import os
+import subprocess
+import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from pathlib import Path
 
 os.environ.setdefault("OMP_NUM_THREADS", "4")
@@ -14,7 +16,7 @@ from sonic_bridge.bundles import export_alignment
 from sonic_bridge.datasets import prepare_clotho
 from sonic_bridge.encoders import make_encoder
 from sonic_bridge.experiments import run_experiment
-from sonic_bridge.util import write_json
+from sonic_bridge.util import read_json, write_json
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--dataset", type=Path, default=Path("data/clotho"))
@@ -41,40 +43,53 @@ provenance = prepare_clotho(args.dataset, output=args.output / "manifest.jsonl",
                             limits=dict(zip(["train", "val", "test"], args.limits)) if args.limits else None,
                             progress=progress)
 reports = {}
-preloaded = {}
 backends = ["clap", "jepa"] if args.backend == "both" else [args.backend]
-if args.parallel:
-    # Transformer/PyTorch lazy imports and model construction share global initialization
-    # state. Complete them serially, then parallelize independent forward passes.
-    for backend in backends:
-        print(f"Loading {backend} models serially", flush=True)
-        preloaded[backend] = make_encoder(backend, args.config if backend == "jepa" else None, offline=args.offline)
-        preloaded[backend].torch.set_num_threads(4)
-    print("Both model backends are ready", flush=True)
 
 
 def benchmark(backend):
     print(f"Loading {backend}", flush=True)
-    encoder = preloaded.pop(backend) if args.parallel else make_encoder(
-        backend, args.config if backend == "jepa" else None, offline=args.offline)
+    encoder = make_encoder(backend, args.config if backend == "jepa" else None, offline=args.offline)
     encoder.torch.set_num_threads(4)
     report = run_experiment(provenance["manifest"], encoder, args.output / backend,
                             budgets=args.budgets, seeds=args.seeds,
                             methods=["native"] if backend == "clap" else ["procrustes", "ridge"],
                             cache_dir=args.dataset / "embedding-cache" / backend, progress=progress)
     del encoder
-    if backend == "jepa":
-        bundle = args.output / "selected-bundle"
-        if not bundle.exists():
-            export_alignment(args.output / "jepa", bundle)
     return backend, report
 
 
 if args.parallel:
-    with ThreadPoolExecutor(max_workers=len(backends)) as pool:
-        reports.update(pool.map(benchmark, backends))
+    # Keep PyTorch's global import, initialization and CPU thread pools isolated.
+    # Each worker is the same documented CLI, with no shell interpolation.
+    with ExitStack() as stack:
+        processes = []
+        for backend in backends:
+            destination = args.output / backend
+            destination.mkdir(parents=True, exist_ok=True)
+            command = [sys.executable, "-m", "sonic_bridge", "experiment", provenance["manifest"],
+                       "--backend", backend, "--output", str(destination),
+                       "--cache-dir", str(args.dataset / "embedding-cache" / backend), "--threads", "4",
+                       "--budgets", *map(str, args.budgets), "--seeds", *map(str, args.seeds),
+                       "--methods", *(["native"] if backend == "clap" else ["procrustes", "ridge"])]
+            if backend == "jepa":
+                command.extend(["--config", str(args.config)])
+            if args.offline:
+                command.append("--offline")
+            stdout = stack.enter_context((destination / "command-output.json").open("w", encoding="utf-8"))
+            print(f"Starting isolated {backend} worker", flush=True)
+            processes.append((backend, subprocess.Popen(command, stdout=stdout)))
+        failed = []
+        for backend, process in processes:
+            if process.wait() != 0:
+                failed.append(backend)
+            else:
+                reports[backend] = read_json(args.output / backend / "report.json")
+        if failed:
+            raise RuntimeError(f"Benchmark workers failed: {failed}. See the benchmark log; caches can be reused.")
 else:
     reports.update(benchmark(backend) for backend in backends)
+if "jepa" in reports:
+    export_alignment(args.output / "jepa", args.output / "selected-bundle")
 if len(reports) == 2:
     comparison = {"dataset": provenance, "reports": reports,
                   "chance_text_to_audio_recall@1": 1 / provenance["splits"]["test"],

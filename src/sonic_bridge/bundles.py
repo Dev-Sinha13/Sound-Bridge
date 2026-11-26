@@ -63,7 +63,8 @@ def export_alignment(experiment, destination):
     shutil.copyfile(source, destination / "alignment.npz")
     shutil.copyfile(source.with_suffix(".json"), destination / "alignment.json")
     config = {k: encoder[k] for k in ["audio_model", "audio_revision", "text_model", "text_revision"]}
-    config.update(trust_remote_code=True, alignment="alignment.npz", alignment_sha256=file_digest(source))
+    config.update(trust_remote_code=True, alignment="alignment.npz", alignment_sha256=file_digest(source),
+                  synthetic_calibration=bool(report.get("synthetic", False)))
     write_json(destination / "config.json", config)
     write_json(destination / "provenance.json", {"source_report_sha256": file_digest(experiment / "report.json"),
                "selection": "Highest validation text-to-audio Recall@1; no test selection",

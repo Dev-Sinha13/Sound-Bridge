@@ -118,10 +118,11 @@ class JepaTextEncoder:
 
 
 class AlignedEncoder:
-    def __init__(self, base, alignment, artifact_hash):
+    def __init__(self, base, alignment, artifact_hash, synthetic_calibration=False):
         self.base, self.alignment = base, alignment
         self.sample_rate = base.sample_rate
         self.identity = {"backend": "aligned", "base": base.identity, "artifact": artifact_hash}
+        self.synthetic_calibration = synthetic_calibration
 
     def encode_audio(self, waveforms):
         return self.alignment.transform(self.base.encode_audio(waveforms))
@@ -150,7 +151,10 @@ def make_encoder(backend, config_path=None, device="cpu", offline=False):
         metadata = read_json(artifact.with_suffix(".json"))
         if metadata["encoder"] != base.identity:
             raise ValueError("Alignment was trained with different encoder revisions")
-        return AlignedEncoder(base, Alignment.load(artifact), file_digest(artifact))
+        provenance_path = artifact.parent / "provenance.json"
+        synthetic = bool(config.get("synthetic_calibration") or
+                         (read_json(provenance_path).get("synthetic") if provenance_path.exists() else False))
+        return AlignedEncoder(base, Alignment.load(artifact), file_digest(artifact), synthetic)
     raise ValueError(f"Unknown backend: {backend}")
 
 

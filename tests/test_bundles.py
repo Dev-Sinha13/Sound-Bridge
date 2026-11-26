@@ -23,6 +23,7 @@ def test_exports_only_validation_selected_artifact_and_pins_integrity(tmp_path):
     assert config["alignment"] == "alignment.npz"
     assert config["alignment_sha256"] == file_digest(experiment / "chosen.npz")
     assert config["audio_revision"] == "a" * 40
+    assert config["synthetic_calibration"]
     published = publish_experiment(experiment, tmp_path / "workspace", "example")
     assert (tmp_path / "workspace" / "experiments" / "example" / "chosen.npz").exists()
     assert publish_experiment(experiment, tmp_path / "workspace", "example") == published

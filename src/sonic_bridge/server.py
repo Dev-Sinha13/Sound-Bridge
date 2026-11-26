@@ -118,6 +118,10 @@ class Application:
         with self.lock:
             jobs = [dict(j) for j in self.jobs.values()][-20:]
         indexes = [index_info(p) for p in sorted((self.workspace / "indexes").glob("*.sqlite"))]
+        for index in indexes:
+            identity = index["settings"]["encoder"] if index["settings"] else None
+            index["compatible"] = identity == self.encoder.identity if self.encoder else bool(
+                identity and identity.get("backend") == self.backend)
         reports = []
         for path in sorted((self.workspace / "experiments").glob("*/report.json")):
             report = read_json(path)
@@ -125,6 +129,7 @@ class Application:
         return {"backend": self.backend, "offline": self.offline, "workspace": str(self.workspace),
                 "synthetic": self.backend == "demo", "indexes": indexes, "jobs": jobs,
                 "reports": reports, "token": self.token, "can_search": self.backend != "jepa",
+                "synthetic_alignment": bool(getattr(self.encoder, "synthetic_calibration", False)),
                 "default_config": str(self.config or "configs/jepa.json")}
 
 

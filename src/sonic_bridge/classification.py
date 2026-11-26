@@ -16,6 +16,19 @@ from .util import digest, file_digest, normalize, save_npz, write_json
 PROMPTS = ["The sound of {label}.", "A recording of {label}.", "You can hear {label}."]
 
 
+def cached_audio_feature(path, base, cache_dir):
+    path, cache_dir = Path(path), Path(cache_dir)
+    key = digest({"sha": file_digest(path), "encoder": base.identity, "policy": "mean-10s-hop5-v1"})
+    cache = cache_dir / f"{key}.npz"
+    if cache.exists():
+        with np.load(cache, allow_pickle=False) as data:
+            return data["audio"]
+    audio = normalize(np.mean([base.encode_audio([w.samples])[0]
+                               for w in windows(path, base.sample_rate)], axis=0))
+    save_npz(cache, audio=audio)
+    return audio
+
+
 def evaluate_esc50(folder, encoder, output, fold=5, cache_dir=None, calibration_manifest=None,
                    alignment_metadata=None, progress=lambda msg: None):
     if not 1 <= fold <= 5:
@@ -56,15 +69,7 @@ def evaluate_esc50(folder, encoder, output, fold=5, cache_dir=None, calibration_
         if i % 20 == 0:
             progress(f"ESC-50 {i + 1}/{len(candidates)}")
         path = folder / "audio" / row["filename"]
-        key = digest({"sha": file_digest(path), "encoder": base.identity, "policy": "mean-10s-hop5-v1"})
-        cache = cache_dir / f"{key}.npz"
-        if cache.exists():
-            with np.load(cache, allow_pickle=False) as data:
-                audio = data["audio"]
-        else:
-            audio = normalize(np.mean([base.encode_audio([w.samples])[0]
-                                       for w in windows(path, base.sample_rate)], axis=0))
-            save_npz(cache, audio=audio)
+        audio = cached_audio_feature(path, base, cache_dir)
         if hasattr(encoder, "alignment"):
             audio = encoder.alignment.transform(audio[None])[0]
         features.append(audio)

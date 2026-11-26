@@ -4,8 +4,12 @@ import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 
+import numpy as np
 import pytest
+import soundfile as sf
 
+from sonic_bridge.encoders import DemoEncoder
+from sonic_bridge.index import build_index
 from sonic_bridge.server import Application, make_handler
 
 
@@ -84,4 +88,19 @@ def test_failed_model_switch_preserves_the_working_backend(tmp_path, monkeypatch
     with pytest.raises(ValueError, match="Missing model"):
         app.switch_backend("aligned", "missing.json", lambda msg: None)
     assert app.backend == "demo" and app.encoder is original
+    app.pool.shutdown()
+
+
+def test_collection_compatibility_checks_the_full_model_identity(tmp_path):
+    folder = tmp_path / "audio"
+    folder.mkdir()
+    t = np.arange(16000) / 16000
+    sf.write(folder / "tone.wav", .2 * np.sin(2 * np.pi * 180 * t), 16000)
+    first, second = DemoEncoder(), DemoEncoder()
+    second.identity = {"backend": "demo", "version": 2}
+    build_index(folder, tmp_path / "indexes" / "first.sqlite", first)
+    build_index(folder, tmp_path / "indexes" / "second.sqlite", second)
+    app = Application(tmp_path, backend="demo")
+    app.encoder = first
+    assert {i["name"]: i["compatible"] for i in app.state()["indexes"]} == {"first": True, "second": False}
     app.pool.shutdown()
