@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sonic Bridge</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body>
+<header><a class="brand" href="/">◒ <span>sonic bridge</span></a><span class="local"><i></i> LOCAL WORKSPACE</span></header>
+<main>
+<div class="intro"><p class="eyebrow">SOUND, FOUND.</p><h1>Find the moment.<br><span>Follow the sound.</span></h1><p class="lede">Search your recordings with words. Explore the bridge between what you hear and what you mean.</p></div>
+<div id="mode" class="mode"></div>
+<nav aria-label="Workspace views"><button class="tab active" data-view="search">01 / Search library</button><button class="tab" data-view="research">02 / Alignment lab</button></nav>
+<section id="search-view">
+<div class="grid">
+<aside class="panel"><div class="panel-heading"><span class="eyebrow">YOUR COLLECTION</span><span>↗</span></div><h2>Bring your sounds.</h2><p class="muted">Index a local folder. Recordings stay on this computer.</p>
+<form id="index-form"><label for="folder">Audio folder</label><input id="folder" placeholder="C:\Recordings" required><label for="name">Collection name</label><input id="name" value="library" pattern="[A-Za-z0-9_-]{1,64}" required><div class="two"><div><label for="window">Window / seconds</label><input id="window" type="number" min="1" max="60" value="10" required></div><div><label for="hop">Step / seconds</label><input id="hop" type="number" min="1" max="60" value="5" required></div></div><button class="primary" type="submit">Index collection <span>→</span></button></form>
+<button id="demo" class="secondary" hidden>Generate synthetic tone fixtures</button>
+<div class="footnote">WAV · FLAC · OGG · MP3<br>Models may download on first use. Offline mode uses cached weights.</div></aside>
+<div class="search-area"><div class="panel search-panel"><label for="collection" class="eyebrow">SEARCH IN</label><select id="collection"><option value="">No collections yet</option></select><form id="search-form"><label for="query">Describe a sound</label><div class="query-row"><input id="query" placeholder="Rain on a window, distant thunder…" required><button type="submit" class="search-button" aria-label="Search">↗</button></div></form><div id="suggestions" class="suggestions"></div></div>
+<div class="results-heading"><h2>Matching moments</h2><span id="result-count">Ready when you are</span></div><div id="results"><div class="empty"><div class="wave">▂ ▅ ▃ █ ▅ ▂ ▆ ▃</div><h3>A whole world in your recordings.</h3><p>Index a collection, then describe what you want to hear.</p></div></div></div>
+</div></section>
+<section id="research-view" hidden><div class="grid"><aside class="panel"><p class="eyebrow">FROZEN ENCODERS · SMALL BRIDGES</p><h2>Test the connection.</h2><p class="muted">Compare native retrieval, orthogonal Procrustes, and ridge regression using separate training, validation, and test recordings.</p><form id="experiment-form"><label for="manifest">Manifest / JSONL path</label><input id="manifest" required placeholder="C:\datasets\manifest.jsonl"><label for="run-name">Experiment name</label><input id="run-name" value="first-run" required pattern="[A-Za-z0-9_-]{1,64}"><label for="budgets">Training source groups</label><input id="budgets" value="100,500,1000" required><button class="primary" type="submit">Run experiment <span>→</span></button></form><p class="footnote">Ridge strength is selected on validation data. Test results never select the model. Synthetic results measure plumbing, not real-world quality.</p></aside><div><div class="results-heading"><h2>Experiment results</h2><span>Recall at 1 / 5 / 10</span></div><div id="reports" class="panel"><p class="muted">Your completed experiments will appear here.</p></div></div></div></section>
+<div id="status" role="status" aria-live="polite">Connecting to local workspace…</div>
+<footer><span>SONIC BRIDGE / RESEARCH EDITION</span><span>Audio ↔ meaning</span></footer>
+</main></body></html>

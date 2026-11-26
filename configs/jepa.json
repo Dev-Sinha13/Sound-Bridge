@@ -1,0 +1,8 @@
+{
+  "audio_model": "ltuncay/Audio-JEPA-base",
+  "audio_revision": "e5d4bcf5a3ce2ea48fb425869b5a1b68bf1a7017",
+  "trust_remote_code": true,
+  "text_model": "sentence-transformers/all-mpnet-base-v2",
+  "text_revision": "e8c3b32edf5434bc2275fc9bab85f82640a19130",
+  "alignment": "../artifacts/jepa/ridge-n100-seed7.npz"
+}

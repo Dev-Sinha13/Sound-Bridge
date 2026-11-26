@@ -1,0 +1,194 @@
+from __future__ import annotations
+
+import io
+import json
+import re
+import secrets
+import threading
+import time
+import traceback
+from concurrent.futures import ThreadPoolExecutor
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+import soundfile as sf
+
+from .audio import read_audio
+from .demo import create_demo
+from .encoders import make_encoder
+from .experiments import run_experiment
+from .index import build_index, index_info, search, segment
+from .util import read_json
+
+
+class Application:
+    def __init__(self, workspace, backend="clap", config=None, device="cpu", offline=False):
+        self.workspace = Path(workspace).resolve()
+        self.workspace.mkdir(parents=True, exist_ok=True)
+        self.backend, self.config, self.device, self.offline = backend, config, device, offline
+        self.encoder = None
+        self.pool = ThreadPoolExecutor(max_workers=1)
+        self.lock = threading.Lock()
+        self.jobs = {}
+        self.token = secrets.token_urlsafe(32)
+
+    def get_encoder(self):
+        if self.encoder is None:
+            self.encoder = make_encoder(self.backend, self.config, self.device, self.offline)
+        return self.encoder
+
+    def database(self, name):
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name or ""):
+            raise ValueError("Index name must use letters, numbers, hyphens or underscores")
+        return self.workspace / "indexes" / f"{name}.sqlite"
+
+    def submit(self, kind, callback):
+        with self.lock:
+            if any(j["status"] in {"queued", "running"} for j in self.jobs.values()):
+                raise ValueError("Another job is running. Wait for it to finish.")
+            key = secrets.token_hex(8)
+            self.jobs[key] = {"id": key, "kind": kind, "status": "queued", "message": "Queued"}
+
+        def progress(message):
+            with self.lock:
+                self.jobs[key]["message"] = message
+
+        def run():
+            started = time.perf_counter()
+            with self.lock:
+                self.jobs[key]["status"] = "running"
+            try:
+                result = callback(progress)
+                with self.lock:
+                    self.jobs[key].update(status="complete", result=result, message="Complete")
+            except Exception as e:  # noqa: BLE001 - report arbitrary model/runtime failures to the job UI
+                traceback.print_exc()
+                with self.lock:
+                    self.jobs[key].update(status="failed", message=str(e))
+            finally:
+                with self.lock:
+                    self.jobs[key]["seconds"] = round(time.perf_counter() - started, 2)
+
+        self.pool.submit(run)
+        return {"job": key}
+
+    def state(self):
+        with self.lock:
+            jobs = [dict(j) for j in self.jobs.values()][-20:]
+        indexes = [index_info(p) for p in sorted((self.workspace / "indexes").glob("*.sqlite"))]
+        reports = []
+        for path in sorted((self.workspace / "experiments").glob("*/report.json")):
+            report = read_json(path)
+            reports.append({"name": path.parent.name, **report})
+        return {"backend": self.backend, "offline": self.offline, "workspace": str(self.workspace),
+                "synthetic": self.backend == "demo", "indexes": indexes, "jobs": jobs,
+                "reports": reports, "token": self.token}
+
+
+def make_handler(app):
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, fmt, *args):
+            pass
+
+        def valid_host(self):
+            return self.headers.get("Host") in {f"127.0.0.1:{self.server.server_port}",
+                                                f"localhost:{self.server.server_port}"}
+
+        def respond(self, body, code=200, content_type="application/json"):
+            if content_type == "application/json":
+                body = json.dumps(body, allow_nan=False).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self'; script-src 'self'; "
+                             "media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'")
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+        def do_GET(self):
+            if not self.valid_host():
+                return self.respond({"error": "Invalid host"}, 403)
+            parsed = urlparse(self.path)
+            try:
+                if parsed.path == "/api/state":
+                    return self.respond(app.state())
+                if parsed.path == "/api/audio":
+                    args = parse_qs(parsed.query)
+                    row = segment(app.database(args["index"][0]), int(args["id"][0]))
+                    samples = read_audio(Path(row["path"]), 16000, row["start"], row["end"])
+                    buf = io.BytesIO()
+                    sf.write(buf, samples, 16000, format="WAV", subtype="PCM_16")
+                    return self.respond(buf.getvalue(), content_type="audio/wav")
+                static = {"/": "index.html", "/app.js": "app.js", "/style.css": "style.css"}
+                if parsed.path in static:
+                    name = static[parsed.path]
+                    mime = {"html": "text/html; charset=utf-8", "js": "text/javascript", "css": "text/css"}
+                    return self.respond((Path(__file__).parent / "static" / name).read_bytes(),
+                                        content_type=mime[name.rsplit(".", 1)[1]])
+                return self.respond({"error": "Not found"}, 404)
+            except (ValueError, KeyError, OSError) as e:
+                return self.respond({"error": str(e)}, 400)
+
+        def do_POST(self):
+            if not self.valid_host() or self.headers.get("X-Sonic-Token") != app.token:
+                return self.respond({"error": "Refresh this local page before submitting"}, 403)
+            origin = self.headers.get("Origin")
+            if origin and origin not in {f"http://127.0.0.1:{self.server.server_port}",
+                                          f"http://localhost:{self.server.server_port}"}:
+                return self.respond({"error": "Cross-origin requests are disabled"}, 403)
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                if not 0 < length <= 65536 or self.headers.get_content_type() != "application/json":
+                    raise ValueError("Expected a JSON request under 64 KB")
+                body = json.loads(self.rfile.read(length))
+                if self.path == "/api/index":
+                    folder, database = Path(body["folder"]).resolve(), app.database(body["name"])
+                    seconds, hop = float(body.get("window", 10)), float(body.get("hop", 5))
+                    return self.respond(app.submit("index", lambda p: build_index(
+                        folder, database, app.get_encoder(), seconds, hop, p)), 202)
+                if self.path == "/api/search":
+                    database = app.database(body["index"])
+                    def do_search(progress):
+                        progress("Encoding query and searching")
+                        return {"index": body["index"], "query": body["query"],
+                                "matches": search(database, app.get_encoder(), body["query"], 10)}
+                    return self.respond(app.submit("search", do_search), 202)
+                if self.path == "/api/demo":
+                    if app.backend != "demo":
+                        raise ValueError("Restart with --backend demo to use the synthetic fixture")
+                    return self.respond(create_demo(app.workspace / "demo"))
+                if self.path == "/api/experiment":
+                    name = body["name"]
+                    app.database(name)  # Apply the same safe-name policy to report directories.
+                    destination = app.workspace / "experiments" / name
+                    if destination.exists():
+                        raise ValueError("Experiment name already exists; choose a new name")
+                    budgets = tuple(int(v) for v in body.get("budgets", [100, 500, 1000]))
+                    return self.respond(app.submit("experiment", lambda p: run_experiment(
+                        body["manifest"], app.get_encoder(), destination, budgets=budgets, progress=p)), 202)
+                return self.respond({"error": "Not found"}, 404)
+            except (ValueError, KeyError, OSError, TypeError) as e:
+                return self.respond({"error": str(e)}, 400)
+
+    return Handler
+
+
+def serve(workspace, backend="clap", config=None, device="cpu", offline=False, port=8765):
+    if backend == "jepa":
+        raise ValueError("Raw JEPA spaces are not aligned. Train a map, then serve --backend aligned")
+    app = Application(workspace, backend, config, device, offline)
+    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(app))
+    print(f"Sonic Bridge: http://127.0.0.1:{server.server_port} | backend={backend}", flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+        app.pool.shutdown(wait=True)

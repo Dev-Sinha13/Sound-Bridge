@@ -1,0 +1,8 @@
+{
+  "audio_model": "ltuncay/Audio-JEPA-base",
+  "audio_revision": "REPLACE_WITH_REVIEWED_40_CHARACTER_HUGGING_FACE_COMMIT",
+  "trust_remote_code": false,
+  "text_model": "sentence-transformers/all-mpnet-base-v2",
+  "text_revision": "main",
+  "alignment": "../artifacts/jepa/ridge-n100-seed7.npz"
+}
