@@ -1,5 +1,7 @@
 # Sonic Bridge
 
+Source repository: [Dev-Sinha13/Sound-Bridge](https://github.com/Dev-Sinha13/Sound-Bridge). Development changes are pushed as tested milestones with conventional commit messages; see [AGENTS.md](AGENTS.md).
+
 Local natural-language audio search and reproducible experiments connecting frozen audio and text encoders.
 
 ## What is built
@@ -102,6 +104,8 @@ The app verifies that the map's encoder identities match the active models. Raw 
 Tests cover known-rotation recovery, ridge solutions in both sample regimes, model artifact roundtrips, audio resampling/window boundaries, incremental indexing and rollback, encoder mismatch rejection, split leakage, multiple-caption relevance, tied ranks, the complete synthetic experiment, and local HTTP access controls. Real pretrained inference and dataset results require separate validation; synthetic tests do not establish model quality.
 
 `scripts/smoke_clap.py` and `scripts/smoke_jepa.py` exercise actual pretrained forward passes and save inference checks under `artifacts/validation`. They may download model weights. These checks verify runtime integration, not retrieval accuracy on environmental audio. The bundled tone fixtures contain repeated semantic categories, so low clip-level Recall@1 is expected even when the tone category is correctly retrieved; do not use these scores to choose a research architecture.
+
+See [the validation record](docs/validation.md) for checked model revisions and scope. GitHub Actions runs core tests on Windows/Linux and Python 3.11/3.13 without downloading pretrained models.
 
 ## Research scope and next steps
 
