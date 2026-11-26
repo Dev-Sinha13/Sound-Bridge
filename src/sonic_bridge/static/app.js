@@ -91,7 +91,7 @@ function renderReports(reports) {
 }
 function busy(value) {
   document.querySelectorAll('form button, #demo').forEach(b => b.disabled = value);
-  if (state && !state.can_search) document.querySelectorAll('#search-view form button').forEach(b => b.disabled = true);
+  if (state && !state.can_search) document.querySelectorAll('#index-form button, #search-form button').forEach(b => b.disabled = true);
 }
 async function refresh() {
   if (polling) return; polling = true;
@@ -105,6 +105,8 @@ async function refresh() {
       previousBackend = state.backend;
     }
     if (!backendInitialized) {
+      if (['clap', 'finelap'].includes(state.backend)) $('search-backend').value = state.backend;
+      if (state.backend === 'finelap') $('search-config').value = state.default_config;
       $('experiment-backend').value = state.synthetic ? 'demo' : state.backend === 'aligned' ? 'jepa' : state.backend;
       $('experiment-config').value = state.default_config;
       backendInitialized = true;
@@ -177,3 +179,4 @@ $('watch').onclick = async () => {
 
 $('model-form').onsubmit = event => { event.preventDefault(); submit('/api/backend', {backend: $('search-backend').value, config: $('search-config').value || ($('search-backend').value === 'finelap' ? 'configs/finelap.json' : null)}); };
 $('experiment-backend').onchange = () => { $('experiment-config').value = $('experiment-backend').value === 'finelap' ? 'configs/finelap.json' : 'configs/jepa.json'; };
+$('search-backend').onchange = () => { $('search-config').value = $('search-backend').value === 'finelap' ? 'configs/finelap.json' : ''; };
