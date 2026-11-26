@@ -12,8 +12,10 @@ Research-backed retrieval and bridge additions are explained in [improvements.md
 
 - CLAP baseline with real local inference, overlapping windows, timestamped playback, incremental content-hash indexing, and temporal duplicate suppression.
 - Frozen Audio-JEPA + MPNet research backend, with ridge regression and equal-dimension orthogonal Procrustes. MPNet is a sentence embedding model, **not a text JEPA**. This first implementation tests practical frozen-encoder alignment, not the full LeCun theorem.
+- Optional pinned FineLAP native retrieval; CCA, nonlinear random-feature, and all-caption contrastive bridge comparisons. These candidates are evaluated before changing defaults.
 - Calibration curves across source-group budgets and random seeds; all captions remain with their recording; ridge regularization selected on validation data; bidirectional Recall@1/5/10 and median rank on held-out test data.
 - Local browser interface: collections, search, audio playback, background jobs, and experiment tables.
+- Multi-scale windows, resumable indexing, folder watching, waveform previews, filters, similarity search, and local relevance judgments. Explicit query evaluation measures wrong recordings, timestamp errors, and absent-sound false accepts.
 - Explicit synthetic tone fixtures for exercising the complete pipeline without model weights. These are not evidence of semantic retrieval capability.
 
 ## Quick start (Windows PowerShell)
@@ -73,6 +75,8 @@ python -m sonic_bridge serve --backend finelap --config configs/finelap.json
 ```
 
 The browser offers model selection, extra window lengths, optional similarity cutoff, file/path filtering, one result per recording, waveform previews, and **Find similar sounds**. **Watch selected folder while open** refreshes changes every ten seconds while the page is open. It pauses for incompatible models; watching configuration is not saved across restarts. Multi-scale indexing costs more inference and storage, so the original ten-second policy stays the default. Embedding caches are local sensitive data and can grow with library changes.
+
+Use the result judgment buttons to save correct sounds, wrong sounds or timestamps, and sounds absent from the entire collection. Judgments and collection/model provenance stay in `data/judgments/`; they do not automatically train a model or change its rankings. Reliable absent-sound rejection still needs a larger, listener-verified validation set.
 
 ### Query judgments and failure analysis
 

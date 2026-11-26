@@ -1,6 +1,6 @@
 # Validation record
 
-Validated locally on Windows with Python 3.13 on November 26, 2026. The complete local regression suite passes **23 tests**; Ruff, JavaScript syntax checking, and dependency consistency checks pass.
+Validated locally on Windows with Python 3.13 on November 26, 2026. The expanded local regression suite passes **33 tests** including the optional Torch projection/pooling checks; Ruff, JavaScript syntax checking, and dependency consistency checks pass. Hosted core-only jobs skip the two tests requiring Torch.
 
 - Regression tests: known orthogonal transformation recovery, ridge primal/dual agreement, audio preprocessing, index caching and rollback, multi-caption retrieval and conservative ties, source/content leakage rejection, synthetic experiment execution, dataset-level synthetic labeling, and the HTTP API.
 - Ruff: `python -m ruff check src tests scripts`.
@@ -16,5 +16,11 @@ Validated locally on Windows with Python 3.13 on November 26, 2026. The complete
 - Packaging: a `sonic_bridge-0.1.0-py3-none-any.whl` builds successfully and contains all three browser assets. Model weights and datasets are separate downloads.
 
 Machine-generated inference records are stored locally in `artifacts/validation/`. Generated weights, audio, caches and datasets are deliberately excluded from Git.
+
+The retrieval improvement milestone passed the four-job hosted matrix in [run 45880332109](https://github.com/Dev-Sinha13/Sound-Bridge/actions/runs/45880332109), and judgment/provenance additions passed in [run 45881437154](https://github.com/Dev-Sinha13/Sound-Bridge/actions/runs/45881437154). New regression coverage includes a short event overwhelmed in a long window, multi-scale retrieval, batch-cache reuse after cancellation, empty-folder refresh, absent-query cutoff selection without test leakage, source-separated query judgments, timestamp IoU, CCA/RFF artifact roundtrips, all-caption contrastive fitting, masked frame pooling, and local judgment saving.
+
+Real HTTP integration (`artifacts/validation/http-v2.json`) passed paper-crumpling search at a 2-second interval, audio/WAV decoding, 160-bin waveform delivery, segment similarity, file filtering, judgment persistence, and watched refresh. FineLAP completed real inference, the query suite and the matched 200-recording Clotho retrieval evaluation, then loaded successfully in offline mode with both pinned snapshots. Browser visual verification of the new controls could not be completed: Computer Use stopped because it could not establish the Windows browser URL reliably. The earlier browser release check above applies to the original interface.
+
+The running app's offline model-switch API also loaded FineLAP, returned paper first for `paper crumpling` against its multi-scale example index, and restored CLAP successfully (`artifacts/validation/model-switch-v2.json`).
 
 These checks establish runtime integration and numerical behavior. Completed real-data measurements are documented in [results.md](results.md). They do not establish total training-data efficiency relative to CLAP, anonymity, edge-device performance, or the theorem's assumptions. See the README for dataset manifests and reproducible experiment commands.
