@@ -104,7 +104,8 @@ def evaluate_queries(suite_path, database, encoder, output, max_false_accept=.1,
                 "false_accept_rate": mean([r["accepted"] for r in negative]),
                 "temporal_recall@1_iou50": mean([r["top_temporal_iou"] >= .5 for r in positive
                                                 if r["top_temporal_iou"] is not None]),
-                "latency_p50_seconds": mean([float(np.median([r["seconds"] for r in rows]))]) if rows else None}
+                "latency_p50_seconds": float(np.median([r["seconds"] for r in rows])) if rows else None,
+                "latency_p95_seconds": float(np.quantile([r["seconds"] for r in rows], .95)) if rows else None}
     report = {"suite_sha256": file_digest(Path(suite_path)), "suite_name": suite.get("name"),
               "judgment_status": suite.get("judgment_status", "unspecified"), "encoder": encoder.identity,
               "index": info, "index_settings_sha256": digest(info["settings"]),

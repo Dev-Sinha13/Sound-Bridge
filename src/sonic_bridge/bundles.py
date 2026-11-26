@@ -50,10 +50,11 @@ def export_alignment(experiment, destination):
             existing = read_json(config_path)
             provenance = read_json(provenance_path)
             expected = {k: encoder[k] for k in ["audio_model", "audio_revision", "text_model", "text_revision"]}
+            expected["audio_pooling"] = encoder.get("audio_pooling", "scene")
             if (provenance.get("source_report_sha256") == file_digest(experiment / "report.json")
                     and existing.get("alignment") == "alignment.npz"
                     and existing.get("trust_remote_code") is True
-                    and all(existing.get(k) == v for k, v in expected.items())
+                    and all(existing.get(k, "scene" if k == "audio_pooling" else None) == v for k, v in expected.items())
                     and existing.get("alignment_sha256") == file_digest(source)
                     and file_digest(destination / "alignment.npz") == file_digest(source)
                     and read_json(destination / "alignment.json") == metadata):
@@ -63,6 +64,8 @@ def export_alignment(experiment, destination):
     shutil.copyfile(source, destination / "alignment.npz")
     shutil.copyfile(source.with_suffix(".json"), destination / "alignment.json")
     config = {k: encoder[k] for k in ["audio_model", "audio_revision", "text_model", "text_revision"]}
+    if "audio_pooling" in encoder:
+        config["audio_pooling"] = encoder["audio_pooling"]
     config.update(trust_remote_code=True, alignment="alignment.npz", alignment_sha256=file_digest(source),
                   synthetic_calibration=bool(report.get("synthetic", False)))
     write_json(destination / "config.json", config)

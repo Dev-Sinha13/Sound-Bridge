@@ -127,3 +127,11 @@ def test_waveform_filters_and_watch_api(live_server):
     app.pool.submit(lambda: None).result(timeout=10)
     assert app.state()["indexes"][0]["files"] == 2
     assert not app.watch("tones", False)["watching"]
+    payload = {"index": "tones", "query": "low tone", "segment": 1, "label": "correct"}
+    req = urllib.request.Request(base + "/api/feedback", data=json.dumps(payload).encode(),
+                                 headers={"Content-Type": "application/json", "X-Sonic-Token": app.token})
+    with urllib.request.urlopen(req) as response:
+        key = json.load(response)["saved"]
+    saved = json.loads((app.workspace / "judgments" / f"{key}.json").read_text())
+    assert saved["source"] == "user_judgment" and saved["segment"]["path"].endswith("tone.wav")
+    assert saved["index"]["content_sha256"]

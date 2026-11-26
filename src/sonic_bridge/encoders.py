@@ -95,16 +95,28 @@ class JepaTextEncoder:
         self.text_model = tr.AutoModel.from_pretrained(text_id, revision=text_revision,
                                                       local_files_only=offline).to(device).eval()
         self.sample_rate = self.audio_processor.sampling_rate
+        self.audio_pooling = config.get("audio_pooling", "scene")
+        if self.audio_pooling not in {"scene", "frame_mean", "frame_max"}:
+            raise ValueError("Audio pooling must be scene, frame_mean, or frame_max")
         self.identity = {"backend": "jepa", "audio_model": audio_id, "audio_revision": config["audio_revision"],
                          "text_model": text_id,
                          "text_revision": getattr(self.text_model.config, "_commit_hash", None) or text_revision,
                          "text_pooling": "masked-mean-384", "sample_rate": self.sample_rate}
+        if self.audio_pooling != "scene":
+            self.identity["audio_pooling"] = self.audio_pooling
 
     def encode_audio(self, waveforms):
         inputs = self.audio_processor(list(waveforms), sampling_rate=self.sample_rate,
                                       return_tensors="pt", padding=True)
         with self.torch.inference_mode():
-            result = self.audio_model(**{k: v.to(self.device) for k, v in inputs.items()}).pooler_output
+            outputs = self.audio_model(**{k: v.to(self.device) for k, v in inputs.items()})
+            if self.audio_pooling == "scene":
+                result = outputs.pooler_output
+            else:
+                hidden = outputs.last_hidden_state
+                mask = outputs.attention_mask.bool().unsqueeze(-1)
+                result = ((hidden * mask).sum(1) / mask.sum(1).clamp(min=1) if self.audio_pooling == "frame_mean"
+                          else hidden.masked_fill(~mask, -self.torch.inf).amax(1))
         return normalize(result.cpu().numpy())
 
     def encode_text(self, texts):

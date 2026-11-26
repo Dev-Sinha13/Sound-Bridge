@@ -18,7 +18,11 @@ function time(value) { return `${Math.floor(value / 60)}:${String(Math.floor(val
 function renderResults(result) {
   $('results').replaceChildren();
   $('result-count').textContent = `${result.matches.length} moments · ${result.query}`;
-  if (!result.matches.length) $('results').append(el('p', 'No matching windows in this collection.', 'muted'));
+  if (!result.matches.length) $('results').append(el('p', 'No windows satisfy the selected filters and similarity cutoff.', 'muted'));
+  const feedback = (label, segment) => request('/api/feedback', {index: result.index, query: result.query, label, segment})
+    .then(() => status('Judgment saved locally. It will not automatically change the model.')).catch(error => status(error.message, true));
+  const absent = el('button', 'This sound is absent from the collection', 'secondary'); absent.type = 'button';
+  absent.onclick = () => feedback('absent'); $('results').append(absent);
   for (const match of result.matches) {
     const card = el('article', undefined, 'result');
     const top = el('div', undefined, 'result-top');
@@ -31,7 +35,11 @@ function renderResults(result) {
     wave.setAttribute('aria-label', 'Audio amplitude waveform');
     const similar = el('button', 'Find similar sounds', 'secondary'); similar.type = 'button';
     similar.onclick = () => submit('/api/search', {index: result.index, query: `Sounds like ${match.name}`, similar_to: match.id, unique_files: true});
-    card.append(top, wave, audio, similar); $('results').append(card);
+    const judgments = el('div', undefined, 'suggestions');
+    for (const [label, text] of [['correct', 'Correct sound'], ['wrong_sound', 'Wrong sound'], ['wrong_timestamp', 'Wrong timestamp']]) {
+      const button = el('button', text); button.type = 'button'; button.onclick = () => feedback(label, match.id); judgments.append(button);
+    }
+    card.append(top, wave, audio, similar, judgments); $('results').append(card);
     request(`/api/waveform?index=${encodeURIComponent(result.index)}&id=${match.id}`).then(data => {
       const ctx = wave.getContext('2d'); ctx.fillStyle = '#32766b';
       const peak = Math.max(...data.peaks, 0.01), width = wave.width / data.peaks.length;

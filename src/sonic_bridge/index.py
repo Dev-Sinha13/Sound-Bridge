@@ -35,6 +35,8 @@ def build_index(folder, database, encoder, seconds=10, hop=5, progress=lambda ms
     scales = sorted({float(s) for s in (scales or [])})
     if any(not 0 < s <= 60 for s in scales):
         raise ValueError("Extra window scales must be between 0 and 60 seconds")
+    if encoder.identity.get("backend") == "finelap" and max([seconds, *scales]) > 10:
+        raise ValueError("FineLAP supports windows up to 10 seconds; use smaller windows to avoid truncation")
     if scales:
         settings["scales"] = scales
     cache_dir = Path(cache_dir) if cache_dir else Path(database).parent / "embedding-cache"
@@ -108,6 +110,7 @@ def index_info(database):
     try:
         row = db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()
         return {"name": path.stem, "settings": json.loads(row[0]) if row else None,
+                "content_sha256": digest([tuple(r) for r in db.execute("SELECT path,sha FROM files ORDER BY path")]),
                 "files": db.execute("SELECT COUNT(*) FROM files").fetchone()[0],
                 "segments": db.execute("SELECT COUNT(*) FROM segments").fetchone()[0]}
     finally:
@@ -136,7 +139,8 @@ def search(database, encoder, query, limit=10, *, min_score=None, name_filter=""
     if similar_to is None:
         q = normalize(encoder.encode_text([query]))[0]
     else:
-        selected = next((i for i, row in enumerate(rows) if row["id"] == int(similar_to)), None)
+        similar_to = int(similar_to)
+        selected = next((i for i, row in enumerate(rows) if row["id"] == similar_to), None)
         if selected is None:
             raise ValueError("Unknown source segment")
         q = normalize(matrix[selected])

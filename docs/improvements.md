@@ -24,9 +24,13 @@ All candidates use the existing source/hash-disjoint manifest, fixed budgets and
 
 [M2D-CLAP](https://github.com/nttcslab/m2d) is another promising candidate. Its loader/checkpoint stack needs a separate integration and matched evaluation; no M2D performance claim is made here. A much larger multimodal LLM such as OEA would also need explicit local resource measurements before adoption. FineLAP is the first additional implemented native model.
 
+The pinned Audio-JEPA interface exposes scene and final timestamp embeddings, not arbitrary intermediate layers. Config `audio_pooling` now supports `scene` (unchanged default), `frame_mean`, and `frame_max`, with padding masked out. Non-default pooling changes model identity, invalidates old embedding caches/indexes, and survives bundle export. The alternatives have runtime/masking checks but no retrieval-quality evaluation yet; they are not recommended defaults.
+
 ## Library behavior
 
 Each indexing batch is saved atomically to a content/model/interval-keyed embedding cache. Cancellation rolls back the searchable database, while a retry reuses completed batches. Unchanged files remain skipped; deleted files are removed on refresh, including an emptied existing collection. Caches contain sensitive derived data and have no automatic retention limit.
+
+Local judgment buttons save correct sound, wrong sound, wrong timestamp, and absent-sound labels under `data/judgments/`, together with the collection content hash and model/window provenance. Labels do not automatically retrain models or change rankings. Users must judge the collection as a whole before marking a sound absent.
 
 The UI includes file/path filtering, an optional similarity cutoff, one hit per recording, lazy waveform previews, and segment-to-segment similarity search. Folder watching checks size/mtime every ten seconds while the browser page polls. It pauses when a different encoder is selected and stops when the server exits. CLI `index --watch 10` continuously rechecks file hashes without a browser. Watching and search share the existing serialized job queue. A file must have a stable write before successful embedding; failed jobs retain the previous index and can be retried. Watching configuration is not persisted across server restarts.
 

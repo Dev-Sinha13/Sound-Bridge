@@ -121,5 +121,7 @@ def main(argv=None):
                 result = run_experiment(args.manifest, encoder, args.output, args.budgets, args.seeds, progress=progress,
                                         methods=args.methods, cache_dir=args.cache_dir, batch_size=args.batch_size)
         print(json.dumps(result, indent=2, allow_nan=False))
+    except KeyboardInterrupt:
+        return
     except (ValueError, RuntimeError, OSError, KeyError) as e:
         parser.exit(1, f"Error: {e}\n")

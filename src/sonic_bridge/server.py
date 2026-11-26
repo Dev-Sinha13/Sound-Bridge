@@ -21,7 +21,7 @@ from .demo import create_demo
 from .encoders import make_encoder
 from .experiments import run_experiment
 from .index import build_index, index_info, search, segment
-from .util import read_json
+from .util import read_json, write_json
 
 
 class JobCancelled(Exception):
@@ -246,6 +246,19 @@ def make_handler(app):
                     return self.respond(app.cancel(body["job"]))
                 if self.path == "/api/watch":
                     return self.respond(app.watch(body["index"], body.get("enabled", True)))
+                if self.path == "/api/feedback":
+                    query = str(body["query"]).strip()
+                    label = body["label"]
+                    if not query or len(query) > 2000 or label not in {"correct", "wrong_sound", "wrong_timestamp", "absent"}:
+                        raise ValueError("Choose a valid judgment and a query under 2000 characters")
+                    database = app.database(body["index"])
+                    info = index_info(database)
+                    row = segment(database, int(body["segment"])) if label != "absent" else None
+                    key = secrets.token_hex(12)
+                    write_json(app.workspace / "judgments" / f"{key}.json",
+                               {"query": query, "label": label, "segment": row, "index": info,
+                                "recorded_at_unix": time.time(), "source": "user_judgment"})
+                    return self.respond({"saved": key})
                 if self.path == "/api/backend":
                     return self.respond(app.submit("models", lambda progress: app.switch_backend(
                         body["backend"], body.get("config"), progress)), 202)
