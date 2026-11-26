@@ -11,9 +11,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import numpy as np
-
-from .util import write_json
+from .util import digest, write_json
 
 CLOTHO_RECORD = "https://zenodo.org/records/4783391"
 # Checksums published in the immutable Zenodo v2.1 record.
@@ -130,6 +128,8 @@ def prepare_clotho(folder, output=None, limits=None, seed=2026, progress=lambda 
     folder = Path(folder).resolve()
     output = Path(output) if output else folder / "manifest.jsonl"
     rows = []
+    exclusions = clotho_exclusions(folder)
+    excluded_counts = {}
     for source_split, split in [("development", "train"), ("validation", "val"), ("evaluation", "test")]:
         with (folder / "downloads" / f"clotho_metadata_{source_split}.csv").open(
                 encoding="latin-1", newline="") as stream:
@@ -138,9 +138,9 @@ def prepare_clotho(folder, output=None, limits=None, seed=2026, progress=lambda 
                 encoding="utf-8-sig", newline="") as stream:
             captions = list(csv.DictReader(stream))
         captions.sort(key=lambda row: row["file_name"])
-        if limits and split in limits and limits[split] < len(captions):
-            order = np.random.default_rng(seed).permutation(len(captions))[:limits[split]]
-            captions = [captions[i] for i in sorted(order)]
+        eligible = [r for r in captions if source_group(metadata[r["file_name"]]) not in exclusions[source_split]]
+        excluded_counts[split] = len(captions) - len(eligible)
+        captions = select_clotho_rows(eligible, metadata, limits.get(split) if limits else None, seed)
         for caption in captions:
             filename = caption["file_name"]
             audio = folder / source_split / filename
@@ -151,8 +151,8 @@ def prepare_clotho(folder, output=None, limits=None, seed=2026, progress=lambda 
                 raise ValueError(f"Missing provenance for {filename}")
             # A source recording can have several excerpts; use its Freesound URL as group.
             source = info.get("sound_link") or info.get("url") or filename
-            rows.append({"id": f"clotho:{filename}", "audio": str(audio), "split": split,
-                         "group": source, "captions": [caption[f"caption_{i}"] for i in range(1, 6)],
+            rows.append({"id": f"clotho:{source_split}:{filename}", "audio": str(audio), "split": split,
+                         "group": source_group(info), "captions": [caption[f"caption_{i}"] for i in range(1, 6)],
                          "synthetic": False, "dataset": "Clotho v2.1", "source": source,
                          "license": info.get("license", "See official metadata"), "metadata": info})
         progress(f"Prepared {len(captions)} {split} recordings")
@@ -162,7 +162,38 @@ def prepare_clotho(folder, output=None, limits=None, seed=2026, progress=lambda 
                "manifest": str(output.resolve()), "seed": seed,
                "splits": {s: sum(r["split"] == s for r in rows) for s in ["train", "val", "test"]},
                "subset": bool(limits), "archive_checksums": FILES,
+               "source_overlap_exclusions": excluded_counts,
+               "split_policy": "Preserve evaluation; exclude its source IDs from validation and development, "
+                               "and validation source IDs from development. Limited subsets use one clip per source "
+                               "and SHA-256 priority sampling keyed by seed and source ID.",
                "license": "Per-audio Freesound licenses; captions under Tampere University's license. "
                           "See downloads/LICENSE and official metadata; recordings are not redistributed."}
     write_json(output.with_suffix(".provenance.json"), summary)
     return summary
+
+
+def source_group(metadata):
+    sound_id = str(metadata.get("sound_id", "")).strip()
+    return f"freesound:{sound_id}" if sound_id else metadata.get("sound_link") or metadata.get("url") or metadata["file_name"]
+
+
+def clotho_exclusions(folder):
+    groups = {}
+    for part in ["development", "validation", "evaluation"]:
+        with (Path(folder) / "downloads" / f"clotho_metadata_{part}.csv").open(
+                encoding="latin-1", newline="") as stream:
+            groups[part] = {source_group(row) for row in csv.DictReader(stream)}
+    return {"development": groups["validation"] | groups["evaluation"],
+            "validation": groups["evaluation"], "evaluation": set()}
+
+
+def select_clotho_rows(captions, metadata, limit=None, seed=2026):
+    if limit is None:
+        return captions
+    if limit < 1:
+        raise ValueError("Subset counts must be positive")
+    unique = {}
+    for row in captions:
+        unique.setdefault(source_group(metadata[row["file_name"]]), row)
+    groups = sorted(unique, key=lambda group: digest({"seed": seed, "group": group}))[:limit]
+    return sorted([unique[group] for group in groups], key=lambda row: row["file_name"])

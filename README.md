@@ -83,6 +83,8 @@ Download/extraction is intentionally explicit; the tool does not silently fetch 
 
 This explicitly downloads about 7 GB, checks the Zenodo v2.1 MD5 values, extracts the archives, and prepares `data/clotho/manifest.jsonl` with original Freesound source groups and per-file licenses. Interrupted downloads are resumed when the server supports HTTP ranges. Captions and audio retain their upstream licenses and are excluded from Git. The source-recording URL, rather than the excerpt filename, is used to detect source overlap across splits.
 
+The preparation now canonicalizes groups by Freesound sound ID and excludes source matches from earlier splits: development excludes validation/evaluation sources, and validation excludes evaluation sources. The provenance JSON records excluded counts. Pilot subsets select one excerpt per source using a deterministic SHA-256 priority keyed by seed and source ID. The official evaluation split is preserved before any explicit pilot subsetting. This produces a source-clean protocol, not an exact reproduction of the unmodified official benchmark.
+
 For the native CLAP reference without fitting any adapters:
 
 ```powershell

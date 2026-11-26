@@ -4,8 +4,7 @@ import csv
 import json
 from pathlib import Path
 
-import numpy as np
-
+from sonic_bridge.datasets import clotho_exclusions, select_clotho_rows, source_group
 from sonic_bridge.encoders import make_encoder
 from sonic_bridge.experiments import extract
 from sonic_bridge.util import file_digest
@@ -21,13 +20,15 @@ if not (args.dataset / f".{args.split}.extracted").exists():
 with (args.dataset / "downloads" / f"clotho_captions_{args.split}.csv").open(
         encoding="utf-8-sig", newline="") as f:
     captions = sorted(csv.DictReader(f), key=lambda row: row["file_name"])
-if args.count < len(captions):
-    indices = np.random.default_rng(args.seed).permutation(len(captions))[:args.count]
-    captions = [captions[i] for i in sorted(indices)]
+with (args.dataset / "downloads" / f"clotho_metadata_{args.split}.csv").open(encoding="latin-1", newline="") as f:
+    metadata = {row["file_name"]: row for row in csv.DictReader(f)}
+excluded = clotho_exclusions(args.dataset)[args.split]
+captions = select_clotho_rows([row for row in captions if source_group(metadata[row["file_name"]]) not in excluded],
+                              metadata, args.count, args.seed)
 rows = []
 for caption in captions:
     audio = (args.dataset / args.split / caption["file_name"]).resolve()
-    rows.append({"id": f"clotho:{audio.name}", "audio": str(audio), "sha": file_digest(audio),
+    rows.append({"id": f"clotho:{args.split}:{audio.name}", "audio": str(audio), "sha": file_digest(audio),
                  "captions": [caption[f"caption_{i}"] for i in range(1, 6)]})
 for backend in ["clap", "jepa"]:
     encoder = make_encoder(backend, Path("configs/jepa.json") if backend == "jepa" else None, offline=True)
