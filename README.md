@@ -74,6 +74,23 @@ Download [Clotho v2.1](https://zenodo.org/records/4783391) and unpack each audio
 
 Download/extraction is intentionally explicit; the tool does not silently fetch a large dataset. Check upstream model pretraining overlap before treating benchmark retrieval as generalization. Add a separate collection of target-user recordings as an external test set. Reports do not claim statistical significance or independent replication of published work.
 
+### Verified official dataset download
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[research]"
+.\.venv\Scripts\python.exe scripts/download_clotho.py --output data/clotho
+```
+
+This explicitly downloads about 7 GB, checks the Zenodo v2.1 MD5 values, extracts the archives, and prepares `data/clotho/manifest.jsonl` with original Freesound source groups and per-file licenses. Interrupted downloads are resumed when the server supports HTTP ranges. Captions and audio retain their upstream licenses and are excluded from Git. The source-recording URL, rather than the excerpt filename, is used to detect source overlap across splits.
+
+For the native CLAP reference without fitting any adapters:
+
+```powershell
+.\.venv\Scripts\python.exe -m sonic_bridge experiment data/clotho/manifest.jsonl --backend clap --methods native --offline --output artifacts/clotho-clap --cache-dir data/embedding-cache/clap --threads 4
+```
+
+`--batch-size` controls audio-window batches and queued text extraction. Embedding caches can be shared across runs and subsets. Reports include the candidate gallery size and 95% bootstrap intervals that resample query recordings together with all their captions; the candidate gallery stays fixed. These intervals do not measure uncertainty across random training seeds.
+
 ### Audio-JEPA experiment
 
 1. Use the supplied `configs/jepa.json`, which pins Audio-JEPA and MPNet revisions. The Audio-JEPA loading/configuration/frontend source was inspected before enabling its custom-code loader; this is not a comprehensive security audit.
@@ -87,6 +104,8 @@ Download/extraction is intentionally explicit; the tool does not silently fetch 
 Each run saves `.npz` weights, JSON provenance, training IDs, validation results, and test metrics. Embedding caches are keyed by audio content, captions, extraction policy, and resolved model identities. Ridge can bridge unequal dimensions; this version skips Procrustes when dimensions differ rather than introducing an implicit projection. Both retrieval sides use the same centered text space after mapping.
 
 Select a run **using validation scores**, update `alignment` in the config to its `.npz` path (relative to the config), then:
+
+Each experiment also copies the run with highest validation text-to-audio Recall@1 to `selected.npz`/`selected.json`. Ties use the first run in the declared method/budget/seed order. Test scores do not participate in this selection.
 
 ```powershell
 .\.venv\Scripts\python.exe -m sonic_bridge serve --backend aligned --config configs/jepa.json

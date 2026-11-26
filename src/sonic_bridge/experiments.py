@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import csv
 import json
+import platform
+import time
 from pathlib import Path
 
 import numpy as np
@@ -39,22 +41,54 @@ def load_manifest(path):
     return rows
 
 
-def extract(rows, encoder, cache_dir, progress=lambda msg: None):
+def extract(rows, encoder, cache_dir, progress=lambda msg: None, batch_size=4):
     cache_dir = Path(cache_dir)
     audio, targets, all_text, text_ids = [], [], [], []
+    pending = []
+
+    def fill_cache():
+        if not pending:
+            return
+        # Text batching avoids running the sentence model once per captioned recording.
+        captions = [caption for _, row in pending for caption in row["captions"]]
+        text_features = []
+        for offset in range(0, len(captions), 32):
+            text_features.extend(encoder.encode_text(captions[offset:offset + 32]))
+        text_offset = 0
+        for cache, row in pending:
+            clip_features, batch = [], []
+            for window in windows(Path(row["audio"]), encoder.sample_rate):
+                batch.append(window.samples)
+                if len(batch) == batch_size:
+                    clip_features.extend(encoder.encode_audio(batch))
+                    batch = []
+            if batch:
+                clip_features.extend(encoder.encode_audio(batch))
+            a = normalize(np.mean(clip_features, axis=0))
+            count = len(row["captions"])
+            t = normalize(np.asarray(text_features[text_offset:text_offset + count]))
+            text_offset += count
+            save_npz(cache, audio=a, text=t)
+        pending.clear()
+
+    # Keep the extraction policy stable: batching changes execution, not preprocessing.
+    keys = []
+    if not 1 <= batch_size <= 64:
+        raise ValueError("Batch size must be between 1 and 64")
     for i, row in enumerate(rows):
-        progress(f"Embedding {i + 1}/{len(rows)}: {row['id']}")
         key = digest({"sha": row["sha"], "captions": row["captions"], "encoder": encoder.identity,
                       "policy": "mean-10s-hop5-v1"})
         cache = cache_dir / f"{key}.npz"
-        if cache.exists():
-            with np.load(cache, allow_pickle=False) as z:
-                a, t = z["audio"], z["text"]
-        else:
-            a = normalize(np.mean([encoder.encode_audio([w.samples])[0]
-                                   for w in windows(Path(row["audio"]), encoder.sample_rate)], axis=0))
-            t = normalize(encoder.encode_text(row["captions"]))
-            save_npz(cache, audio=a, text=t)
+        keys.append(cache)
+        if not cache.exists():
+            pending.append((cache, row))
+            if len(pending) == batch_size:
+                progress(f"Embedding {i + 1}/{len(rows)}: {row['id']}")
+                fill_cache()
+    fill_cache()
+    for row, cache in zip(rows, keys):
+        with np.load(cache, allow_pickle=False) as z:
+            a, t = z["audio"], z["text"]
         audio.append(a)
         targets.append(normalize(t.mean(axis=0)))
         all_text.extend(t)
@@ -62,7 +96,7 @@ def extract(rows, encoder, cache_dir, progress=lambda msg: None):
     return np.stack(audio), np.stack(targets), np.stack(all_text), np.array(text_ids)
 
 
-def retrieval(audio, text, audio_ids, text_ids):
+def retrieval(audio, text, audio_ids, text_ids, bootstrap=0):
     """All captions are relevant to their clip. Ties receive the conservative rank."""
     audio, text = normalize(audio), normalize(text)
     audio_ids, text_ids = np.asarray(audio_ids), np.asarray(text_ids)
@@ -83,43 +117,71 @@ def retrieval(audio, text, audio_ids, text_ids):
                 ranks.append(1 + int(np.count_nonzero(score[~relevant] >= best)))
         ranks = np.asarray(ranks)
         metrics[name] = {**{f"recall@{k}": float(np.mean(ranks <= k)) for k in [1, 5, 10]},
-                         "median_rank": float(np.median(ranks)), "queries": len(ranks)}
+                         "median_rank": float(np.median(ranks)), "queries": len(ranks),
+                         "candidates": len(candidates)}
+        if bootstrap:
+            metrics[name]["recall_ci95"] = bootstrap_recall(ranks, qids, bootstrap)
     return metrics
 
 
+def bootstrap_recall(ranks, ids, iterations=1000, seed=2026):
+    """Resample recording IDs, retaining all captions together and candidates fixed."""
+    _, inverse = np.unique(ids, return_inverse=True)
+    counts = np.bincount(inverse)
+    successes = np.stack([np.bincount(inverse, weights=np.asarray(ranks) <= k) for k in [1, 5, 10]])
+    rng = np.random.default_rng(seed)
+    samples = []
+    for offset in range(0, iterations, 100):
+        indices = rng.integers(0, len(counts), (min(100, iterations - offset), len(counts)))
+        samples.append(successes[:, indices].sum(axis=2) / counts[indices].sum(axis=1))
+    values = np.concatenate(samples, axis=1)
+    return {f"recall@{k}": np.quantile(values[i], [0.025, 0.975]).tolist() for i, k in enumerate([1, 5, 10])}
+
+
 def run_experiment(manifest, encoder, output, budgets=(100, 500, 1000, 3000), seeds=(7, 23, 42),
-                   alphas=(0.01, 0.1, 1.0, 10.0), progress=lambda msg: None):
+                   alphas=(0.01, 0.1, 1.0, 10.0), progress=lambda msg: None,
+                   methods=None, cache_dir=None, batch_size=4):
+    started = time.perf_counter()
+    methods = list(methods) if methods is not None else ["native", "procrustes", "ridge"]
+    if not methods or any(m not in {"native", "procrustes", "ridge"} for m in methods):
+        raise ValueError("Methods must be native, procrustes, or ridge")
+    if encoder.identity["backend"] == "aligned":
+        raise ValueError("Experiments require raw frozen encoders, not a previously fitted map")
     rows = load_manifest(manifest)
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
-    a, y, t, tids = extract(rows, encoder, output / "cache", progress)
+    a, y, t, tids = extract(rows, encoder, cache_dir or output / "cache", progress, batch_size)
+    extraction_seconds = time.perf_counter() - started
     ids = np.array([r["id"] for r in rows])
     masks = {split: np.array([r["split"] == split for r in rows]) for split in ["train", "val", "test"]}
     tmasks = {split: np.isin(tids, ids[mask]) for split, mask in masks.items()}
 
-    def score(split, bridge=None):
+    def score(split, bridge=None, bootstrap=0):
         aa, tt = a[masks[split]], t[tmasks[split]]
         if bridge:
             aa, tt = bridge.transform(aa), bridge.text_transform(tt)
-        return retrieval(aa, tt, ids[masks[split]], tids[tmasks[split]])
+        return retrieval(aa, tt, ids[masks[split]], tids[tmasks[split]], bootstrap)
 
     records = []
-    if encoder.identity["backend"] in {"clap", "demo"}:
-        records.append({"method": "native", "budget": 0, "seed": None, "test": score("test")})
+    if "native" in methods and encoder.identity["backend"] in {"clap", "demo"}:
+        records.append({"method": "native", "budget": 0, "seed": None, "test": score("test", bootstrap=1000)})
+    bridge_methods = [m for m in methods if m != "native"]
+    if not records and not bridge_methods:
+        raise ValueError("Native retrieval is only defined for an already aligned CLAP/demo encoder")
     train = np.flatnonzero(masks["train"])
     groups = sorted({rows[i]["group"] for i in train})
     requested = sorted({int(b) for b in budgets})
     if any(b < 2 for b in requested):
         raise ValueError("Pair budgets must be at least 2 source groups")
     usable = [b for b in requested if b <= len(groups)]
-    if not usable:
+    if bridge_methods and not usable:
         raise ValueError(f"No budget fits {len(groups)} training groups; choose smaller --budgets")
-    for seed in seeds:
+    for seed in (seeds if bridge_methods else []):
         order = np.random.default_rng(seed).permutation(groups)
         for budget in usable:
             selected = set(order[:budget])
             ix = np.array([i for i in train if rows[i]["group"] in selected])
-            for method in ["procrustes", "ridge"]:
+            for method in bridge_methods:
                 if method == "procrustes" and a.shape[1] != y.shape[1]:
                     continue
                 candidates = []
@@ -135,18 +197,31 @@ def run_experiment(manifest, encoder, output, budgets=(100, 500, 1000, 3000), se
                            "training_ids": ids[ix].tolist(), "validation": validation})
                 record = {"method": method, "budget": budget, "rows": len(ix), "seed": seed,
                           "alpha": bridge.alpha, "artifact": f"{name}.npz", "validation": validation,
-                          "test": score("test", bridge)}
+                          "test": score("test", bridge, bootstrap=1000)}
                 records.append(record)
                 progress(f"Finished {name}")
-    report = {"schema": 1, "encoder": encoder.identity, "manifest_sha": file_digest(Path(manifest)),
+    selected = max((r for r in records if "validation" in r),
+                   key=lambda r: r["validation"]["text_to_audio"]["recall@1"], default=None)
+    report = {"schema": 2, "encoder": encoder.identity, "manifest_sha": file_digest(Path(manifest)),
               "synthetic": encoder.identity["backend"] == "demo" or any(r.get("synthetic", False) for r in rows),
               "requested_budgets": requested,
               "skipped_budgets": [b for b in requested if b not in usable],
               "splits": {s: int(m.sum()) for s, m in masks.items()}, "results": records,
+              "selected_artifact": selected["artifact"] if selected else None,
+              "runtime": {"extraction_seconds": round(extraction_seconds, 3),
+                          "total_seconds": round(time.perf_counter() - started, 3),
+                          "python": platform.python_version(), "numpy": np.__version__, "batch_size": batch_size},
+              "confidence_intervals": "95% percentile bootstrap over query recording IDs, 1000 draws; "
+                                      "all captions stay together; candidate gallery fixed. Not seed uncertainty.",
               "protocol": "Source-disjoint splits; alpha chosen on validation T2A R@1; test only reported. "
                           "Budget counts source groups; captions averaged per clip for fitting. "
                           "No model selected using test scores. Pretraining overlap is not automatically known."}
     write_json(output / "report.json", report)
+    if selected:
+        import shutil
+        artifact = output / selected["artifact"]
+        shutil.copyfile(artifact, output / "selected.npz")
+        shutil.copyfile(artifact.with_suffix(".json"), output / "selected.json")
     return report
 
 

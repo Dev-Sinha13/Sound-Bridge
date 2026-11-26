@@ -41,6 +41,10 @@ def main(argv=None):
     experiment.add_argument("--output", type=Path, default=Path("artifacts/experiment"))
     experiment.add_argument("--budgets", type=int, nargs="+", default=[100, 500, 1000, 3000])
     experiment.add_argument("--seeds", type=int, nargs="+", default=[7, 23, 42])
+    experiment.add_argument("--methods", choices=["native", "procrustes", "ridge"], nargs="+")
+    experiment.add_argument("--cache-dir", type=Path)
+    experiment.add_argument("--batch-size", type=int, default=4)
+    experiment.add_argument("--threads", type=int, default=4, help="PyTorch CPU thread count")
     web = commands.add_parser("serve", help="Start the local browser app")
     model_options(web)
     web.add_argument("--workspace", type=Path, default=Path("data"))
@@ -71,7 +75,12 @@ def main(argv=None):
             elif args.command == "search":
                 result = search(args.database, encoder, args.query, args.limit)
             else:
-                result = run_experiment(args.manifest, encoder, args.output, args.budgets, args.seeds, progress=progress)
+                if hasattr(encoder, "torch"):
+                    if not 1 <= args.threads <= 64:
+                        raise ValueError("Threads must be between 1 and 64")
+                    encoder.torch.set_num_threads(args.threads)
+                result = run_experiment(args.manifest, encoder, args.output, args.budgets, args.seeds, progress=progress,
+                                        methods=args.methods, cache_dir=args.cache_dir, batch_size=args.batch_size)
         print(json.dumps(result, indent=2, allow_nan=False))
     except (ValueError, RuntimeError, OSError, KeyError) as e:
         parser.exit(1, f"Error: {e}\n")

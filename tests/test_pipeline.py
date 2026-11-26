@@ -7,7 +7,7 @@ import soundfile as sf
 from sonic_bridge.audio import read_audio, windows
 from sonic_bridge.demo import create_demo
 from sonic_bridge.encoders import DemoEncoder
-from sonic_bridge.experiments import load_manifest, retrieval, run_experiment
+from sonic_bridge.experiments import bootstrap_recall, load_manifest, retrieval, run_experiment
 from sonic_bridge.index import build_index, index_info, search
 
 
@@ -84,6 +84,10 @@ def test_experiment_end_to_end_and_train_only_metadata(tmp_path):
         assert all(i.startswith("train-") for i in metadata["training_ids"])
         assert metadata["rows"] <= 18
     assert (output / "report.json").exists()
+    selected = json.loads((output / "selected.json").read_text())
+    best_validation = max(r["validation"]["text_to_audio"]["recall@1"]
+                          for r in report["results"] if "validation" in r)
+    assert selected["validation"]["text_to_audio"]["recall@1"] == best_validation
 
 
 def test_synthetic_dataset_stays_labeled_with_a_research_backend(tmp_path):
@@ -93,3 +97,20 @@ def test_synthetic_dataset_stays_labeled_with_a_research_backend(tmp_path):
     report = run_experiment(fixture["manifest"], encoder, tmp_path / "output", budgets=[6], seeds=[7])
     assert report["synthetic"]
     assert all(r["method"] != "native" for r in report["results"])
+
+
+def test_native_only_benchmark_needs_no_calibration_budget(tmp_path):
+    fixture = create_demo(tmp_path / "fixture")
+    report = run_experiment(fixture["manifest"], DemoEncoder(), tmp_path / "output", methods=["native"])
+    assert len(report["results"]) == 1
+    assert report["selected_artifact"] is None
+    assert report["results"][0]["test"]["text_to_audio"]["candidates"] == 6
+
+
+def test_bootstrap_keeps_caption_groups_and_is_deterministic():
+    ranks = np.array([1, 1, 7, 7])
+    ids = np.array(["a", "a", "b", "b"])
+    result = bootstrap_recall(ranks, ids, iterations=200)
+    assert result == bootstrap_recall(ranks, ids, iterations=200)
+    assert result["recall@1"] == [0.0, 1.0]
+    assert result["recall@10"] == [1.0, 1.0]
