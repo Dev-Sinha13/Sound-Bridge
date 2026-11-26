@@ -148,6 +148,11 @@ def run_experiment(manifest, encoder, output, budgets=(100, 500, 1000, 3000), se
     if encoder.identity["backend"] == "aligned":
         raise ValueError("Experiments require raw frozen encoders, not a previously fitted map")
     rows = load_manifest(manifest)
+    manifest_rows = rows
+    if methods == ["native"]:
+        # A pretrained native reference has no calibration fit or validation selection.
+        # Validate all splits for leakage, but only encode the held-out gallery and its queries.
+        rows = [row for row in rows if row["split"] == "test"]
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     a, y, t, tids = extract(rows, encoder, cache_dir or output / "cache", progress, batch_size)
@@ -203,10 +208,11 @@ def run_experiment(manifest, encoder, output, budgets=(100, 500, 1000, 3000), se
     selected = max((r for r in records if "validation" in r),
                    key=lambda r: r["validation"]["text_to_audio"]["recall@1"], default=None)
     report = {"schema": 2, "encoder": encoder.identity, "manifest_sha": file_digest(Path(manifest)),
-              "synthetic": encoder.identity["backend"] == "demo" or any(r.get("synthetic", False) for r in rows),
+              "synthetic": encoder.identity["backend"] == "demo" or any(r.get("synthetic", False) for r in manifest_rows),
               "requested_budgets": requested,
               "skipped_budgets": [b for b in requested if b not in usable],
-              "splits": {s: int(m.sum()) for s, m in masks.items()}, "results": records,
+              "splits": {s: sum(r["split"] == s for r in manifest_rows) for s in ["train", "val", "test"]},
+              "encoded_recordings": len(rows), "results": records,
               "selected_artifact": selected["artifact"] if selected else None,
               "runtime": {"extraction_seconds": round(extraction_seconds, 3),
                           "total_seconds": round(time.perf_counter() - started, 3),

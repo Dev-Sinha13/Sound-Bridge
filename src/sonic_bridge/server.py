@@ -47,6 +47,19 @@ class Application:
                 torch.set_num_threads(4)
         return self.encoder
 
+    def switch_backend(self, backend, config, progress):
+        if backend not in {"clap", "aligned", "demo"}:
+            raise ValueError("Search supports CLAP, a fitted alignment, or the synthetic demo")
+        progress(f"Loading {backend} models")
+        encoder = make_encoder(backend, config, self.device, self.offline)
+        torch = getattr(encoder, "torch", getattr(getattr(encoder, "base", None), "torch", None))
+        if torch:
+            torch.set_num_threads(4)
+        progress("Models ready")
+        # Preserve the current working backend if the requested model fails to load.
+        self.encoder, self.backend, self.config = encoder, backend, config
+        return {"backend": backend, "encoder": encoder.identity}
+
     def database(self, name):
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name or ""):
             raise ValueError("Index name must use letters, numbers, hyphens or underscores")
@@ -182,6 +195,9 @@ def make_handler(app):
                     raise ValueError("Raw JEPA features are not aligned. Run an experiment and export a bridge first.")
                 if self.path == "/api/cancel":
                     return self.respond(app.cancel(body["job"]))
+                if self.path == "/api/backend":
+                    return self.respond(app.submit("models", lambda progress: app.switch_backend(
+                        body["backend"], body.get("config"), progress)), 202)
                 if self.path == "/api/index":
                     folder, database = Path(body["folder"]).resolve(), app.database(body["name"])
                     seconds, hop = float(body.get("window", 10)), float(body.get("hop", 5))

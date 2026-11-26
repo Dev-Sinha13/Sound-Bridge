@@ -71,3 +71,17 @@ def test_job_cancellation_is_cooperative_and_recorded(tmp_path):
     release.set()
     app.pool.shutdown(wait=True)
     assert app.jobs[key]["status"] == "cancelled"
+
+
+def test_failed_model_switch_preserves_the_working_backend(tmp_path, monkeypatch):
+    app = Application(tmp_path, backend="demo")
+    original = app.get_encoder()
+
+    def fail(*args):
+        raise ValueError("Missing model")
+
+    monkeypatch.setattr("sonic_bridge.server.make_encoder", fail)
+    with pytest.raises(ValueError, match="Missing model"):
+        app.switch_backend("aligned", "missing.json", lambda msg: None)
+    assert app.backend == "demo" and app.encoder is original
+    app.pool.shutdown()

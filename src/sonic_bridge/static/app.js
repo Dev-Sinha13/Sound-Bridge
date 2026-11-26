@@ -3,6 +3,7 @@ let activeJob = null;
 let polling = false;
 let reportsKey = '';
 let backendInitialized = false;
+let previousBackend = null;
 const $ = id => document.getElementById(id);
 const el = (tag, text, cls) => { const n = document.createElement(tag); if (text !== undefined) n.textContent = text; if (cls) n.className = cls; return n; };
 function status(message, error = false) { $('status').textContent = message; $('status').classList.toggle('error', error); }
@@ -52,7 +53,18 @@ function renderReports(reports) {
       if (report.encoder.backend === 'jepa') {
         const button = el('button', 'Export selected alignment', 'secondary');
         button.onclick = async () => {
-          try { const result = await request('/api/export-alignment', {experiment: report.name}); status(`Exported config: ${result.config}`); }
+          try {
+            const result = await request('/api/export-alignment', {experiment: report.name});
+            status(`Exported config: ${result.config}`);
+            const use = el('button', 'Use this alignment for search', 'secondary');
+            use.onclick = () => {
+              const current = state.indexes.find(i => i.name === $('collection').value);
+              if (current) { $('folder').value = current.settings.root; $('name').value = `${current.name.slice(0, 58)}-jepa`; }
+              submit('/api/backend', {backend: 'aligned', config: result.config});
+              document.querySelector('[data-view="search"]').click();
+            };
+            button.replaceWith(use);
+          }
           catch (error) { status(error.message, true); }
         };
         block.append(button);
@@ -70,6 +82,11 @@ async function refresh() {
     state = await request('/api/state');
     $('mode').textContent = state.synthetic ? 'SYNTHETIC DEMO / Only low, mid, and high tone queries are supported. This verifies the pipeline; it is not a semantic audio model.' : `${state.backend.toUpperCase()} / Local inference · ${state.offline ? 'cached models only' : 'model files may download on first use'} · similarity scores are not probabilities`;
     $('demo').hidden = !state.synthetic;
+    $('use-clap').hidden = state.backend !== 'aligned';
+    if (state.backend !== previousBackend) {
+      $('suggestions').replaceChildren();
+      previousBackend = state.backend;
+    }
     if (!backendInitialized) {
       $('experiment-backend').value = state.synthetic ? 'demo' : state.backend === 'aligned' ? 'jepa' : state.backend;
       $('experiment-config').value = state.default_config;
@@ -97,6 +114,10 @@ async function refresh() {
         status(`${job.kind}: ${job.message}${job.seconds !== undefined ? ` · ${job.seconds}s` : ''}`, job.status === 'failed');
         if (['complete', 'failed', 'cancelled'].includes(job.status)) {
           if (job.kind === 'search' && job.status === 'complete') renderResults(job.result);
+          if (job.kind === 'models' && job.status === 'complete') {
+            $('results').replaceChildren(el('p', 'Models ready. Index a collection in this embedding space to search it.', 'muted'));
+            $('result-count').textContent = 'Ready to index';
+          }
           activeJob = null;
         }
       }
@@ -122,6 +143,7 @@ $('cancel-job').onclick = async () => {
   try { await request('/api/cancel', {job: $('cancel-job').dataset.job}); status('Cancellation requested; finishing the current model operation.'); }
   catch (error) { status(error.message, true); }
 };
+$('use-clap').onclick = () => submit('/api/backend', {backend: 'clap'});
 $('demo').onclick = async () => { try { const fixture = await request('/api/demo', {}); $('folder').value = fixture.folder; $('manifest').value = fixture.manifest; $('budgets').value = '6,12,18'; $('name').value = 'tones'; status(fixture.note); } catch (error) { status(error.message, true); } };
 document.querySelectorAll('.tab').forEach(button => button.onclick = () => { document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b === button)); $('search-view').hidden = button.dataset.view !== 'search'; $('research-view').hidden = button.dataset.view !== 'research'; });
 refresh(); setInterval(refresh, 1500);

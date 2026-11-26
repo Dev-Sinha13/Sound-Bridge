@@ -118,6 +118,17 @@ Export a self-contained alignment bundle (map, provenance, pinned encoder config
 
 The bundle records the map's SHA-256, which the loader verifies. The Alignment lab lets you choose CLAP for a native baseline or Audio-JEPA + MPNet for fitting, independently of the backend used for collection search. Completed JEPA experiments have an export button. Raw `--backend jepa` can open the research interface, but indexing/search is disabled until an alignment is fitted.
 
+After exporting in the browser, **Use this alignment for search** loads it without restarting the app. Create a new collection for that embedding space; existing CLAP indexes remain separate. **Use CLAP baseline** switches back. Failed model loads preserve the previous working backend. Re-exporting an unchanged bundle is safe; a different or modified bundle is never overwritten.
+
+Publish a completed CLI experiment into the local browser's Alignment lab:
+
+```powershell
+.\.venv\Scripts\python.exe -m sonic_bridge publish-experiment artifacts/clotho-pilot/jepa --name clotho-jepa
+.\.venv\Scripts\python.exe -m sonic_bridge publish-experiment artifacts/clotho-pilot/clap --name clotho-clap
+```
+
+This copies the report and its validation-selected map into the local workspace, excluding recordings, embedding caches, and unused fitted maps.
+
 ### Reproduce the comparative benchmark
 
 ```powershell

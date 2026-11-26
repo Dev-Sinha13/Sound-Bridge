@@ -104,6 +104,8 @@ def test_native_only_benchmark_needs_no_calibration_budget(tmp_path):
     report = run_experiment(fixture["manifest"], DemoEncoder(), tmp_path / "output", methods=["native"])
     assert len(report["results"]) == 1
     assert report["selected_artifact"] is None
+    assert report["encoded_recordings"] == 6
+    assert report["splits"] == {"train": 18, "val": 6, "test": 6}
     assert report["results"][0]["test"]["text_to_audio"]["candidates"] == 6
 
 

@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from .bundles import export_alignment
+from .bundles import export_alignment, publish_experiment
 from .demo import create_demo
 from .encoders import make_encoder
 from .experiments import import_clotho, run_experiment
@@ -58,6 +58,10 @@ def main(argv=None):
     export = commands.add_parser("export-alignment", help="Export the validation-selected JEPA bridge")
     export.add_argument("experiment", type=Path)
     export.add_argument("--output", type=Path, required=True)
+    publish = commands.add_parser("publish-experiment", help="Show a completed CLI experiment in the local app")
+    publish.add_argument("experiment", type=Path)
+    publish.add_argument("--workspace", type=Path, default=Path("data"))
+    publish.add_argument("--name", required=True)
     args = parser.parse_args(argv)
     progress = lambda msg: print(msg, file=sys.stderr, flush=True)
     try:
@@ -67,6 +71,8 @@ def main(argv=None):
             result = import_clotho(args.captions, args.audio_dir, args.split, args.output)
         elif args.command == "export-alignment":
             result = export_alignment(args.experiment, args.output)
+        elif args.command == "publish-experiment":
+            result = publish_experiment(args.experiment, args.workspace, args.name)
         elif args.command == "serve":
             serve(args.workspace, args.backend, args.config, args.device, args.offline, args.port)
             return

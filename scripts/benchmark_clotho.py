@@ -41,11 +41,22 @@ provenance = prepare_clotho(args.dataset, output=args.output / "manifest.jsonl",
                             limits=dict(zip(["train", "val", "test"], args.limits)) if args.limits else None,
                             progress=progress)
 reports = {}
+preloaded = {}
+backends = ["clap", "jepa"] if args.backend == "both" else [args.backend]
+if args.parallel:
+    # Transformer/PyTorch lazy imports and model construction share global initialization
+    # state. Complete them serially, then parallelize independent forward passes.
+    for backend in backends:
+        print(f"Loading {backend} models serially", flush=True)
+        preloaded[backend] = make_encoder(backend, args.config if backend == "jepa" else None, offline=args.offline)
+        preloaded[backend].torch.set_num_threads(4)
+    print("Both model backends are ready", flush=True)
 
 
 def benchmark(backend):
     print(f"Loading {backend}", flush=True)
-    encoder = make_encoder(backend, args.config if backend == "jepa" else None, offline=args.offline)
+    encoder = preloaded.pop(backend) if args.parallel else make_encoder(
+        backend, args.config if backend == "jepa" else None, offline=args.offline)
     encoder.torch.set_num_threads(4)
     report = run_experiment(provenance["manifest"], encoder, args.output / backend,
                             budgets=args.budgets, seeds=args.seeds,
@@ -59,7 +70,6 @@ def benchmark(backend):
     return backend, report
 
 
-backends = ["clap", "jepa"] if args.backend == "both" else [args.backend]
 if args.parallel:
     with ThreadPoolExecutor(max_workers=len(backends)) as pool:
         reports.update(pool.map(benchmark, backends))

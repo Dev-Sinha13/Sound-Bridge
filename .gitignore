@@ -7,3 +7,5 @@ data/
 artifacts/
 .cache/
 *.log
+build/
+dist/
