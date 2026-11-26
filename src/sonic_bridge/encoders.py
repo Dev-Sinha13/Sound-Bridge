@@ -117,6 +117,73 @@ class JepaTextEncoder:
         return normalize(result.cpu().numpy())
 
 
+class FineLapEncoder:
+    """Reviewed FineLAP global embeddings with its published Kaldi frontend."""
+
+    sample_rate = 16000
+
+    def __init__(self, config, device="cpu", offline=False):
+        from huggingface_hub import snapshot_download
+
+        torch, tr = _runtime()
+        revision = config.get("revision", "")
+        text_revision = config.get("text_revision", "")
+        if not config.get("trust_remote_code") or not all(re.fullmatch(r"[a-f0-9]{40}", r)
+                                                         for r in [revision, text_revision]):
+            raise ValueError("FineLAP requires reviewed, pinned model/text revisions and trust_remote_code: true")
+        self.torch, self.device = torch, device
+        model_id = config.get("model", "AndreasXi/FineLAP")
+        text_id = config.get("text_model", "FacebookAI/roberta-base")
+        # Upstream initializes RoBERTa inside its constructor. Resolve that nested dependency
+        # to a pinned local snapshot too, including when the outer model is offline.
+        text_path = snapshot_download(text_id, revision=text_revision, local_files_only=offline,
+                                      allow_patterns=["config.json", "model.safetensors", "vocab.json", "merges.txt",
+                                                      "tokenizer.json", "tokenizer_config.json"])
+        cfg = tr.AutoConfig.from_pretrained(model_id, revision=revision, trust_remote_code=True,
+                                            local_files_only=offline)
+        cfg.text_encoder_name = text_path
+        self.model = tr.AutoModel.from_pretrained(model_id, revision=revision, config=cfg,
+                                                 trust_remote_code=True, local_files_only=offline,
+                                                 use_safetensors=True).to(device).eval()
+        self.identity = {"backend": "finelap", "model": model_id, "revision": revision,
+                         "text_model": text_id, "text_revision": text_revision,
+                         "frontend": "kaldi128-1024-frames-v1", "pooling": "global"}
+
+    def encode_audio(self, waveforms):
+        import torchaudio
+        from torch.nn import functional as F
+
+        mels = []
+        for samples in waveforms:
+            wav = self.torch.as_tensor(np.asarray(samples), dtype=self.torch.float32)
+            if len(wav) < 400:
+                wav = F.pad(wav, (0, 400 - len(wav)))
+            wav = wav - wav.mean()
+            mel = torchaudio.compliance.kaldi.fbank(wav.unsqueeze(0), htk_compat=True, sample_frequency=16000,
+                                                  use_energy=False, window_type="hanning", num_mel_bins=128,
+                                                  dither=0.0, frame_shift=10)
+            mel = F.pad(mel, (0, 0, 0, max(0, 1024 - len(mel))))[:1024]
+            mels.append((mel + 4.268) / (4.569 * 2))
+        with self.torch.inference_mode():
+            outputs = self.model.audio_encoder.extract_features(self.torch.stack(mels).unsqueeze(1).to(self.device))
+            raw = outputs["x"] if isinstance(outputs, dict) else outputs
+            if self.model.config.unify_audio_proj:
+                patches = raw[:, 1:].reshape(len(raw), -1, 8, raw.shape[-1]).mean(2)
+                features = self.torch.cat([raw[:, :1], patches], dim=1)
+                projected = self.model.local_audio_proj(features)
+                if isinstance(projected, tuple):
+                    projected = projected[0]
+                result = projected[:, 0]
+            else:
+                result = self.model.global_audio_proj(raw[:, 0])
+        return normalize(result.cpu().numpy())
+
+    def encode_text(self, texts):
+        with self.torch.inference_mode():
+            result = self.model.get_global_text_embeds(list(texts), device=self.device)
+        return normalize(result.cpu().numpy())
+
+
 class AlignedEncoder:
     def __init__(self, base, alignment, artifact_hash, synthetic_calibration=False):
         self.base, self.alignment = base, alignment
@@ -137,6 +204,10 @@ def make_encoder(backend, config_path=None, device="cpu", offline=False):
         return DemoEncoder()
     if backend == "clap":
         return ClapEncoder(device, offline, config.get("model", "laion/clap-htsat-unfused"), config.get("revision", "main"))
+    if backend == "finelap":
+        if not config_path:
+            raise ValueError("FineLAP needs --config configs/finelap.json")
+        return FineLapEncoder(config, device, offline)
     if backend in {"jepa", "aligned"}:
         if not config_path:
             raise ValueError("JEPA needs --config configs/jepa.json (see example)")

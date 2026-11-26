@@ -1,0 +1,7 @@
+{
+  "model": "AndreasXi/FineLAP",
+  "revision": "b419aa22947d29907a5567f21b81bf3b39a40449",
+  "text_model": "FacebookAI/roberta-base",
+  "text_revision": "e2da8e2f811d1448a5b465c236feacd80ffbac7b",
+  "trust_remote_code": true
+}

@@ -104,3 +104,26 @@ def test_collection_compatibility_checks_the_full_model_identity(tmp_path):
     app.encoder = first
     assert {i["name"]: i["compatible"] for i in app.state()["indexes"]} == {"first": True, "second": False}
     app.pool.shutdown()
+
+
+def test_waveform_filters_and_watch_api(live_server):
+    app, base = live_server
+    folder = app.workspace / "audio"
+    folder.mkdir()
+    sf.write(folder / "tone.wav", np.sin(2 * np.pi * 180 * np.arange(16000) / 16000) * .2, 16000)
+    app.encoder = DemoEncoder()
+    build_index(folder, app.database("tones"), app.encoder, scales=[.5])
+    with urllib.request.urlopen(base + "/api/waveform?index=tones&id=1") as response:
+        waveform = json.load(response)
+    assert len(waveform["peaks"]) == 160 and max(waveform["peaks"]) <= 1
+    app.watch("tones", True)
+    app.poll_watches()
+    # Wait for this specific queued refresh, without shutting down the executor.
+    app.pool.submit(lambda: None).result(timeout=10)
+    assert app.watches["tones"]["signature"]
+    sf.write(folder / "second.wav", np.ones(16000) * .1, 16000)
+    app.watches["tones"]["checked"] = 0
+    app.poll_watches()
+    app.pool.submit(lambda: None).result(timeout=10)
+    assert app.state()["indexes"][0]["files"] == 2
+    assert not app.watch("tones", False)["watching"]

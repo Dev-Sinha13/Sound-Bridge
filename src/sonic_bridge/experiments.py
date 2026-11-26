@@ -143,8 +143,8 @@ def run_experiment(manifest, encoder, output, budgets=(100, 500, 1000, 3000), se
                    methods=None, cache_dir=None, batch_size=4):
     started = time.perf_counter()
     methods = list(methods) if methods is not None else ["native", "procrustes", "ridge"]
-    if not methods or any(m not in {"native", "procrustes", "ridge"} for m in methods):
-        raise ValueError("Methods must be native, procrustes, or ridge")
+    if not methods or any(m not in {"native", "procrustes", "ridge", "cca", "rff", "contrastive"} for m in methods):
+        raise ValueError("Methods must be native, procrustes, ridge, cca, rff, or contrastive")
     if encoder.identity["backend"] == "aligned":
         raise ValueError("Experiments require raw frozen encoders, not a previously fitted map")
     rows = load_manifest(manifest)
@@ -168,7 +168,7 @@ def run_experiment(manifest, encoder, output, budgets=(100, 500, 1000, 3000), se
         return retrieval(aa, tt, ids[masks[split]], tids[tmasks[split]], bootstrap)
 
     records = []
-    if "native" in methods and encoder.identity["backend"] in {"clap", "demo"}:
+    if "native" in methods and encoder.identity["backend"] in {"clap", "finelap", "demo"}:
         records.append({"method": "native", "budget": 0, "seed": None, "test": score("test", bootstrap=1000)})
     bridge_methods = [m for m in methods if m != "native"]
     if not records and not bridge_methods:
@@ -190,8 +190,15 @@ def run_experiment(manifest, encoder, output, budgets=(100, 500, 1000, 3000), se
                 if method == "procrustes" and a.shape[1] != y.shape[1]:
                     continue
                 candidates = []
-                for alpha in (alphas if method == "ridge" else [0.0]):
-                    bridge = Alignment.fit(a[ix], y[ix], method, alpha)
+                for alpha in (alphas if method in {"ridge", "cca", "rff"} else [0.0]):
+                    if method == "contrastive":
+                        caption_mask = np.isin(tids, ids[ix])
+                        indices = {identifier: j for j, identifier in enumerate(ids[ix])}
+                        bridge = Alignment.fit_contrastive(a[ix], t[caption_mask],
+                                                           [indices[i] for i in tids[caption_mask]],
+                                                           seed=int(seed), progress=progress)
+                    else:
+                        bridge = Alignment.fit(a[ix], y[ix], method, alpha)
                     validation = score("val", bridge)
                     candidates.append((validation["text_to_audio"]["recall@1"], bridge, validation))
                 _, bridge, validation = max(candidates, key=lambda c: c[0])
@@ -220,7 +227,8 @@ def run_experiment(manifest, encoder, output, budgets=(100, 500, 1000, 3000), se
               "confidence_intervals": "95% percentile bootstrap over query recording IDs, 1000 draws; "
                                       "all captions stay together; candidate gallery fixed. Not seed uncertainty.",
               "protocol": "Source-disjoint splits; alpha chosen on validation T2A R@1; test only reported. "
-                          "Budget counts source groups; captions averaged per clip for fitting. "
+                          "Budget counts source groups; captions averaged per clip for linear/RFF fitting; "
+                          "contrastive fitting uses all captions as positives and other recordings as negatives. "
                           "No model selected using test scores. Pretraining overlap is not automatically known."}
     write_json(output / "report.json", report)
     if selected:

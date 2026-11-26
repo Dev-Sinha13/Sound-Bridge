@@ -27,7 +27,16 @@ function renderResults(result) {
     top.append(title, el('span', `${match.score.toFixed(3)} similarity`, 'score'));
     const audio = el('audio'); audio.controls = true; audio.preload = 'none';
     audio.src = `/api/audio?index=${encodeURIComponent(result.index)}&id=${match.id}`;
-    card.append(top, audio); $('results').append(card);
+    const wave = el('canvas'); wave.width = 640; wave.height = 48; wave.className = 'waveform';
+    wave.setAttribute('aria-label', 'Audio amplitude waveform');
+    const similar = el('button', 'Find similar sounds', 'secondary'); similar.type = 'button';
+    similar.onclick = () => submit('/api/search', {index: result.index, query: `Sounds like ${match.name}`, similar_to: match.id, unique_files: true});
+    card.append(top, wave, audio, similar); $('results').append(card);
+    request(`/api/waveform?index=${encodeURIComponent(result.index)}&id=${match.id}`).then(data => {
+      const ctx = wave.getContext('2d'); ctx.fillStyle = '#32766b';
+      const peak = Math.max(...data.peaks, 0.01), width = wave.width / data.peaks.length;
+      data.peaks.forEach((v, i) => { const h = Math.max(1, v / peak * 44); ctx.fillRect(i * width, (48 - h) / 2, Math.max(1, width - 1), h); });
+    }).catch(() => { wave.hidden = true; });
   }
 }
 function renderReports(reports) {
@@ -104,6 +113,7 @@ async function refresh() {
     }
     if (state.synthetic) $('query').placeholder = 'A low, mid, or high tone…';
     renderReports(state.reports);
+    $('watch').textContent = state.watches?.[$('collection').value] ? 'Stop watching selected folder' : 'Watch selected folder while open';
     const running = state.jobs.find(j => ['running', 'queued'].includes(j.status));
     $('cancel-job').hidden = !running;
     $('cancel-job').dataset.job = running ? running.id : '';
@@ -131,12 +141,13 @@ async function submit(url, body) {
   try { const result = await request(url, body); activeJob = result.job; status('Job queued…'); await refresh(); }
   catch (error) { status(error.message, true); busy(false); }
 }
-$('index-form').onsubmit = event => { event.preventDefault(); submit('/api/index', {folder: $('folder').value, name: $('name').value, window: Number($('window').value), hop: Number($('hop').value)}); };
-$('search-form').onsubmit = event => { event.preventDefault(); if (!$('collection').value) return status('Index a compatible collection first.', true); submit('/api/search', {index: $('collection').value, query: $('query').value}); };
+$('index-form').onsubmit = event => { event.preventDefault(); submit('/api/index', {folder: $('folder').value, name: $('name').value, window: Number($('window').value), hop: Number($('hop').value), scales: $('scales').value.split(',').map(v => v.trim()).filter(Boolean).map(Number)}); };
+$('search-form').onsubmit = event => { event.preventDefault(); if (!$('collection').value) return status('Index a compatible collection first.', true); submit('/api/search', {index: $('collection').value, query: $('query').value, min_score: $('min-score').value === '' ? null : Number($('min-score').value), name_filter: $('name-filter').value, unique_files: $('unique-files').checked}); };
 $('experiment-form').onsubmit = event => {
   event.preventDefault();
   submit('/api/experiment', {name: $('run-name').value, manifest: $('manifest').value,
-    backend: $('experiment-backend').value, config: $('experiment-backend').value === 'jepa' ? $('experiment-config').value : null,
+    backend: $('experiment-backend').value, config: ['jepa', 'finelap'].includes($('experiment-backend').value) ? $('experiment-config').value : null,
+    methods: $('methods').value.split(',').map(v => v.trim()).filter(Boolean),
     budgets: $('budgets').value.split(',').map(Number)});
 };
 $('cancel-job').onclick = async () => {
@@ -147,3 +158,14 @@ $('use-clap').onclick = () => submit('/api/backend', {backend: 'clap'});
 $('demo').onclick = async () => { try { const fixture = await request('/api/demo', {}); $('folder').value = fixture.folder; $('manifest').value = fixture.manifest; $('budgets').value = '6,12,18'; $('name').value = 'tones'; status(fixture.note); } catch (error) { status(error.message, true); } };
 document.querySelectorAll('.tab').forEach(button => button.onclick = () => { document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b === button)); $('search-view').hidden = button.dataset.view !== 'search'; $('research-view').hidden = button.dataset.view !== 'research'; });
 refresh(); setInterval(refresh, 1500);
+
+$('watch').onclick = async () => {
+  try { if (!$('collection').value) throw new Error('Choose a collection first.');
+    const enabled = !state.watches?.[$('collection').value];
+    await request('/api/watch', {index: $('collection').value, enabled});
+    status(enabled ? 'Watching while this page is open. Changes are checked every 10 seconds.' : 'Folder watching stopped.'); await refresh();
+  } catch (error) { status(error.message, true); }
+};
+
+$('model-form').onsubmit = event => { event.preventDefault(); submit('/api/backend', {backend: $('search-backend').value, config: $('search-config').value || ($('search-backend').value === 'finelap' ? 'configs/finelap.json' : null)}); };
+$('experiment-backend').onchange = () => { $('experiment-config').value = $('experiment-backend').value === 'finelap' ? 'configs/finelap.json' : 'configs/jepa.json'; };

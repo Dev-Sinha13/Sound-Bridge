@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 from .bundles import export_alignment, publish_experiment
@@ -10,11 +11,12 @@ from .demo import create_demo
 from .encoders import make_encoder
 from .experiments import import_clotho, run_experiment
 from .index import build_index, search
+from .query_eval import evaluate_queries
 from .server import serve
 
 
 def model_options(parser):
-    parser.add_argument("--backend", choices=["clap", "jepa", "aligned", "demo"], default="clap")
+    parser.add_argument("--backend", choices=["clap", "finelap", "jepa", "aligned", "demo"], default="clap")
     parser.add_argument("--config", type=Path)
     parser.add_argument("--device", default="cpu", help="cpu or cuda")
     parser.add_argument("--offline", action="store_true", help="Only load cached model files")
@@ -31,18 +33,30 @@ def main(argv=None):
     index.add_argument("--database", type=Path, default=Path("data/indexes/library.sqlite"))
     index.add_argument("--window", type=float, default=10)
     index.add_argument("--hop", type=float, default=5)
+    index.add_argument("--scales", type=float, nargs="+", help="Additional window lengths, e.g. 2 5")
+    index.add_argument("--watch", type=float, metavar="SECONDS", help="Recheck the folder at this interval until Ctrl+C")
     query = commands.add_parser("search", help="Search a previously built index")
     model_options(query)
     query.add_argument("query")
     query.add_argument("--database", type=Path, default=Path("data/indexes/library.sqlite"))
     query.add_argument("--limit", type=int, default=10)
+    query.add_argument("--min-score", type=float)
+    query.add_argument("--name-filter", default="")
+    query.add_argument("--unique-files", action="store_true")
+    query.add_argument("--similar-to", type=int, help="Retrieve by an indexed segment ID instead of text")
+    evaluate = commands.add_parser("evaluate-queries", help="Evaluate judged queries and choose a cutoff on validation")
+    model_options(evaluate)
+    evaluate.add_argument("suite", type=Path)
+    evaluate.add_argument("--database", type=Path, required=True)
+    evaluate.add_argument("--output", type=Path, required=True)
+    evaluate.add_argument("--max-false-accept", type=float, default=.1)
     experiment = commands.add_parser("experiment", help="Fit and evaluate bridges on source-disjoint splits")
     model_options(experiment)
     experiment.add_argument("manifest", type=Path)
     experiment.add_argument("--output", type=Path, default=Path("artifacts/experiment"))
     experiment.add_argument("--budgets", type=int, nargs="+", default=[100, 500, 1000, 3000])
     experiment.add_argument("--seeds", type=int, nargs="+", default=[7, 23, 42])
-    experiment.add_argument("--methods", choices=["native", "procrustes", "ridge"], nargs="+")
+    experiment.add_argument("--methods", choices=["native", "procrustes", "ridge", "cca", "rff", "contrastive"], nargs="+")
     experiment.add_argument("--cache-dir", type=Path)
     experiment.add_argument("--batch-size", type=int, default=4)
     experiment.add_argument("--threads", type=int, default=4, help="PyTorch CPU thread count")
@@ -83,9 +97,22 @@ def main(argv=None):
                 raise ValueError("Fit experiments with raw --backend jepa, not a previously aligned encoder")
             encoder = make_encoder(args.backend, args.config, args.device, args.offline)
             if args.command == "index":
-                result = build_index(args.folder, args.database, encoder, args.window, args.hop, progress)
+                if args.watch is not None and args.watch < 5:
+                    raise ValueError("Watch interval must be at least 5 seconds")
+                while True:
+                    result = build_index(args.folder, args.database, encoder, args.window, args.hop, progress,
+                                         scales=args.scales)
+                    if args.watch is None:
+                        break
+                    print(json.dumps(result), flush=True)
+                    time.sleep(args.watch)
             elif args.command == "search":
-                result = search(args.database, encoder, args.query, args.limit)
+                result = search(args.database, encoder, args.query, args.limit, min_score=args.min_score,
+                                name_filter=args.name_filter, unique_files=args.unique_files,
+                                similar_to=args.similar_to)
+            elif args.command == "evaluate-queries":
+                result = evaluate_queries(args.suite, args.database, encoder, args.output,
+                                          args.max_false_accept, progress)
             else:
                 if hasattr(encoder, "torch"):
                     if not 1 <= args.threads <= 64:

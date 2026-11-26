@@ -6,6 +6,8 @@ Local natural-language audio search and reproducible experiments connecting froz
 
 Completed real-audio measurements and their evaluation limits are recorded in [the results report](docs/results.md).
 
+Research-backed retrieval and bridge additions are explained in [improvements.md](docs/improvements.md), including evaluation limits and primary sources.
+
 ## What is built
 
 - CLAP baseline with real local inference, overlapping windows, timestamped playback, incremental content-hash indexing, and temporal duplicate suppression.
@@ -57,6 +59,37 @@ Click **Generate synthetic tone fixtures**, then **Index collection**. Search fo
 ```
 
 Keep each database tied to one encoder, model revision, root folder, and window policy. Changed settings need a new database. Changed audio is re-embedded; unchanged files reuse indexed vectors. A failed indexing job rolls back its changes. Search scores are cosine similarities, not probabilities. Short overlapping hits are suppressed; this first version does not reason about event order or separate simultaneous sources.
+
+### Finer search and a growing library
+
+```powershell
+# Preserve shorter events; a different window policy requires a new database.
+python -m sonic_bridge index C:\Recordings --database data/indexes/multi.sqlite --scales 2 5
+python -m sonic_bridge search "paper crumpling" --database data/indexes/multi.sqlite --unique-files --name-filter kitchen
+# Recheck continuously; stop with Ctrl+C. Completed embedding batches survive retries.
+python -m sonic_bridge index C:\Recordings --database data/indexes/multi.sqlite --scales 2 5 --watch 10
+# Compare the optional pinned FineLAP model (downloads weights on first use).
+python -m sonic_bridge serve --backend finelap --config configs/finelap.json
+```
+
+The browser offers model selection, extra window lengths, optional similarity cutoff, file/path filtering, one result per recording, waveform previews, and **Find similar sounds**. **Watch selected folder while open** refreshes changes every ten seconds while the page is open. It pauses for incompatible models; watching configuration is not saved across restarts. Multi-scale indexing costs more inference and storage, so the original ten-second policy stays the default. Embedding caches are local sensitive data and can grow with library changes.
+
+### Query judgments and failure analysis
+
+```powershell
+python scripts/benchmark_search.py data/example_library docs/query-development.json --backend clap --offline --output artifacts/search-v2/clap
+python -m sonic_bridge evaluate-queries docs/query-development.json --database artifacts/search-v2/clap/multi.sqlite --output artifacts/query-report.json --offline
+```
+
+For a real assessment, create a listener-verified suite using the JSON schema in `docs/query-development.json`. Each row needs a query, `val`/`test` split, source group, category and relevant relative filenames; `relevant: []` means absent. Optional `start`/`end` values label an event interval in seconds. Keep related source recordings and paraphrases within one split. Validation must include both present and absent sounds. The evaluator selects its rejection cutoff using validation only, then reports held-out false accepts, correct accepts, retrieval ranks, timestamp IoU and inspectable failures. A fitted cutoff is specific to that model, gallery and window policy; it is not a universal confidence score. The included authored suite is exploratory and not independently verified.
+
+Additional bridge candidates can reuse existing embeddings:
+
+```powershell
+python -m sonic_bridge experiment artifacts/clotho-pilot/manifest.jsonl --backend jepa --config configs/jepa.json --offline --methods ridge procrustes cca rff contrastive --budgets 100 500 1000 --seeds 7 --cache-dir data/clotho/embedding-cache/jepa --output artifacts/bridge-v2
+```
+
+CCA projects both modalities into a shared space; RFF tests a small nonlinear map; the contrastive head trains against each caption individually. All upstream encoders remain frozen. Hyperparameters and exported maps are selected using validation data. The lab's comma-separated methods field exposes the same candidates.
 
 ## Real-data calibration and evaluation
 

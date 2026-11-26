@@ -1,0 +1,180 @@
+{
+  "name": "example-library-intent-development-v1",
+  "judgment_status": "Author-created from recording metadata/captions; not independently listener-verified. Previously inspected gallery; exploratory development evaluation only.",
+  "queries": [
+    {
+      "split": "val",
+      "group": "paper",
+      "category": "keyword",
+      "query": "paper crumpling",
+      "relevant": [
+        {
+          "file": "paper falling and crunching_1-2.wav"
+        }
+      ]
+    },
+    {
+      "split": "val",
+      "group": "paper",
+      "category": "question",
+      "query": "Where can I hear someone crunching a sheet of paper?",
+      "relevant": [
+        {
+          "file": "paper falling and crunching_1-2.wav"
+        }
+      ]
+    },
+    {
+      "split": "val",
+      "group": "chopping",
+      "category": "command",
+      "query": "Find a knife chopping vegetables on a board",
+      "relevant": [
+        {
+          "file": "Chopping Celery.wav"
+        }
+      ]
+    },
+    {
+      "split": "val",
+      "group": "chopping",
+      "category": "paraphrase",
+      "query": "Repeated crisp chopping in a kitchen",
+      "relevant": [
+        {
+          "file": "Chopping Celery.wav"
+        }
+      ]
+    },
+    {
+      "split": "val",
+      "group": "washer",
+      "category": "keyword",
+      "query": "washing machine spin cycle",
+      "relevant": [
+        {
+          "file": "WasherSpinCycleWindUp.wav"
+        }
+      ]
+    },
+    {
+      "split": "val",
+      "group": "washer",
+      "category": "question",
+      "query": "Which recording has a washing machine speeding up?",
+      "relevant": [
+        {
+          "file": "WasherSpinCycleWindUp.wav"
+        }
+      ]
+    },
+    {
+      "split": "test",
+      "group": "bells",
+      "category": "command",
+      "query": "Find ringing church bells",
+      "relevant": [
+        {
+          "file": "St Pauls Bells 1.wav"
+        }
+      ]
+    },
+    {
+      "split": "test",
+      "group": "bells",
+      "category": "paraphrase",
+      "query": "Overlapping metallic bell tones ringing out",
+      "relevant": [
+        {
+          "file": "St Pauls Bells 1.wav"
+        }
+      ]
+    },
+    {
+      "split": "test",
+      "group": "gravel",
+      "category": "keyword",
+      "query": "footsteps on gravel",
+      "relevant": [
+        {
+          "file": "walking-gravel.wav"
+        }
+      ]
+    },
+    {
+      "split": "test",
+      "group": "gravel",
+      "category": "question",
+      "query": "Where is someone walking on loose gravel?",
+      "relevant": [
+        {
+          "file": "walking-gravel.wav"
+        }
+      ]
+    },
+    {
+      "split": "test",
+      "group": "snow",
+      "category": "command",
+      "query": "Find footsteps crunching through snow",
+      "relevant": [
+        {
+          "file": "WALK_outAndBack_snowDay_01.wav"
+        }
+      ]
+    },
+    {
+      "split": "test",
+      "group": "snow",
+      "category": "exclusion",
+      "query": "Footsteps in snow rather than on gravel",
+      "relevant": [
+        {
+          "file": "WALK_outAndBack_snowDay_01.wav"
+        }
+      ]
+    },
+    {
+      "split": "val",
+      "group": "absent-val-0",
+      "category": "absent",
+      "query": "A solo violin playing a melody",
+      "relevant": []
+    },
+    {
+      "split": "val",
+      "group": "absent-val-1",
+      "category": "absent",
+      "query": "A dog barking repeatedly",
+      "relevant": []
+    },
+    {
+      "split": "val",
+      "group": "absent-val-2",
+      "category": "absent",
+      "query": "An emergency siren passing by",
+      "relevant": []
+    },
+    {
+      "split": "test",
+      "group": "absent-test-0",
+      "category": "absent",
+      "query": "Someone playing a grand piano",
+      "relevant": []
+    },
+    {
+      "split": "test",
+      "group": "absent-test-1",
+      "category": "absent",
+      "query": "A helicopter hovering overhead",
+      "relevant": []
+    },
+    {
+      "split": "test",
+      "group": "absent-test-2",
+      "category": "absent",
+      "query": "A person snoring in bed",
+      "relevant": []
+    }
+  ]
+}

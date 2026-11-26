@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import numpy as np
 import soundfile as sf
 
 from .audio import read_audio
@@ -38,6 +39,41 @@ class Application:
         self.jobs = {}
         self.cancel_signals = {}
         self.token = secrets.token_urlsafe(32)
+        self.watches = {}
+
+    def watch(self, name, enabled):
+        info = index_info(self.database(name))
+        if enabled:
+            self.watches[name] = {"settings": info["settings"], "checked": 0, "signature": None, "error": None}
+        else:
+            self.watches.pop(name, None)
+        return {"name": name, "watching": bool(enabled)}
+
+    def poll_watches(self):
+        # Called by the browser's state polling: watching stops when the app is closed.
+        from .audio import discover
+        for name, watch in list(self.watches.items()):
+            if time.monotonic() - watch["checked"] < 10:
+                continue
+            watch["checked"] = time.monotonic()
+            settings = watch["settings"]
+            if self.encoder is None or settings["encoder"] != self.encoder.identity:
+                continue
+            try:
+                last = self.jobs.get(watch.get("job"), {})
+                if last.get("status") in {"failed", "cancelled"}:
+                    watch["signature"] = None
+                signature = [(str(p), p.stat().st_size, p.stat().st_mtime_ns)
+                             for p in discover(Path(settings["root"]))]
+                if signature != watch["signature"]:
+                    job = self.submit("index", lambda p, s=settings, n=name: build_index(
+                        s["root"], self.database(n), self.get_encoder(), s["window"], s["hop"], p,
+                        scales=s.get("scales")))
+                    watch["job"] = job["job"]
+                    watch["signature"] = signature
+                    watch["error"] = None
+            except (OSError, ValueError) as error:
+                watch["error"] = str(error)
 
     def get_encoder(self):
         if self.encoder is None:
@@ -48,7 +84,7 @@ class Application:
         return self.encoder
 
     def switch_backend(self, backend, config, progress):
-        if backend not in {"clap", "aligned", "demo"}:
+        if backend not in {"clap", "finelap", "aligned", "demo"}:
             raise ValueError("Search supports CLAP, a fitted alignment, or the synthetic demo")
         progress(f"Loading {backend} models")
         encoder = make_encoder(backend, config, self.device, self.offline)
@@ -115,6 +151,7 @@ class Application:
         return {"job": key, "cancellation_requested": True}
 
     def state(self):
+        self.poll_watches()
         with self.lock:
             jobs = [dict(j) for j in self.jobs.values()][-20:]
         indexes = [index_info(p) for p in sorted((self.workspace / "indexes").glob("*.sqlite"))]
@@ -130,6 +167,7 @@ class Application:
                 "synthetic": self.backend == "demo", "indexes": indexes, "jobs": jobs,
                 "reports": reports, "token": self.token, "can_search": self.backend != "jepa",
                 "synthetic_alignment": bool(getattr(self.encoder, "synthetic_calibration", False)),
+                "watches": {name: {"error": w["error"]} for name, w in self.watches.items()},
                 "default_config": str(self.config or "configs/jepa.json")}
 
 
@@ -172,6 +210,12 @@ def make_handler(app):
                     buf = io.BytesIO()
                     sf.write(buf, samples, 16000, format="WAV", subtype="PCM_16")
                     return self.respond(buf.getvalue(), content_type="audio/wav")
+                if parsed.path == "/api/waveform":
+                    args = parse_qs(parsed.query)
+                    row = segment(app.database(args["index"][0]), int(args["id"][0]))
+                    samples = read_audio(Path(row["path"]), 8000, row["start"], row["end"])
+                    peaks = [float(np.max(np.abs(chunk))) for chunk in np.array_split(samples, min(160, len(samples)))]
+                    return self.respond({"peaks": peaks, "start": row["start"], "end": row["end"]})
                 static = {"/": "index.html", "/app.js": "app.js", "/style.css": "style.css"}
                 if parsed.path in static:
                     name = static[parsed.path]
@@ -200,6 +244,8 @@ def make_handler(app):
                     raise ValueError("Raw JEPA features are not aligned. Run an experiment and export a bridge first.")
                 if self.path == "/api/cancel":
                     return self.respond(app.cancel(body["job"]))
+                if self.path == "/api/watch":
+                    return self.respond(app.watch(body["index"], body.get("enabled", True)))
                 if self.path == "/api/backend":
                     return self.respond(app.submit("models", lambda progress: app.switch_backend(
                         body["backend"], body.get("config"), progress)), 202)
@@ -207,13 +253,17 @@ def make_handler(app):
                     folder, database = Path(body["folder"]).resolve(), app.database(body["name"])
                     seconds, hop = float(body.get("window", 10)), float(body.get("hop", 5))
                     return self.respond(app.submit("index", lambda p: build_index(
-                        folder, database, app.get_encoder(), seconds, hop, p)), 202)
+                        folder, database, app.get_encoder(), seconds, hop, p, scales=body.get("scales"))), 202)
                 if self.path == "/api/search":
                     database = app.database(body["index"])
                     def do_search(progress):
                         progress("Encoding query and searching")
                         return {"index": body["index"], "query": body["query"],
-                                "matches": search(database, app.get_encoder(), body["query"], 10)}
+                                "matches": search(database, app.get_encoder(), body["query"], 10,
+                                                  min_score=body.get("min_score"),
+                                                  name_filter=body.get("name_filter", ""),
+                                                  unique_files=body.get("unique_files", False),
+                                                  similar_to=body.get("similar_to"))}
                     return self.respond(app.submit("search", do_search), 202)
                 if self.path == "/api/demo":
                     if app.backend != "demo":
@@ -227,7 +277,7 @@ def make_handler(app):
                         raise ValueError("Experiment name already exists; choose a new name")
                     budgets = tuple(int(v) for v in body.get("budgets", [100, 500, 1000]))
                     backend = body.get("backend", "jepa" if app.backend == "aligned" else app.backend)
-                    if backend not in {"demo", "clap", "jepa"}:
+                    if backend not in {"demo", "clap", "finelap", "jepa"}:
                         raise ValueError("Choose CLAP or raw Audio-JEPA for an experiment")
                     config = body.get("config") or app.config
 
@@ -238,7 +288,7 @@ def make_handler(app):
                             encoder = make_encoder(backend, config, app.device, app.offline)
                             if hasattr(encoder, "torch"):
                                 encoder.torch.set_num_threads(4)
-                        methods = ["native"] if backend == "clap" else ["procrustes", "ridge"]
+                        methods = ["native"] if backend in {"clap", "finelap"} else body.get("methods", ["procrustes", "ridge"])
                         return run_experiment(body["manifest"], encoder, destination, budgets=budgets,
                                               methods=methods, progress=progress,
                                               cache_dir=app.workspace / "embedding-cache" / backend)

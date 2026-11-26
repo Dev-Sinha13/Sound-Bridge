@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from .audio import discover, windows
-from .util import file_digest, normalize
+from .util import digest, file_digest, normalize, save_npz
 
 
 def connect(path: Path):
@@ -23,14 +23,21 @@ def connect(path: Path):
     return db
 
 
-def build_index(folder, database, encoder, seconds=10, hop=5, progress=lambda msg: None):
+def build_index(folder, database, encoder, seconds=10, hop=5, progress=lambda msg: None,
+                scales=None, cache_dir=None):
     if not 0 < hop <= seconds <= 60:
         raise ValueError("Require 0 < hop <= window <= 60 seconds")
     files = discover(Path(folder))
-    if not files:
+    if not files and not Path(database).exists():
         raise ValueError("No supported audio files found (WAV, FLAC, OGG, MP3)")
     settings = {"encoder": encoder.identity, "window": seconds, "hop": hop,
                 "root": str(Path(folder).resolve()), "schema": 1}
+    scales = sorted({float(s) for s in (scales or [])})
+    if any(not 0 < s <= 60 for s in scales):
+        raise ValueError("Extra window scales must be between 0 and 60 seconds")
+    if scales:
+        settings["scales"] = scales
+    cache_dir = Path(cache_dir) if cache_dir else Path(database).parent / "embedding-cache"
     db = connect(Path(database))
     try:
         row = db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()
@@ -46,14 +53,22 @@ def build_index(folder, database, encoder, seconds=10, hop=5, progress=lambda ms
                     continue
                 changed += 1
                 db.execute("DELETE FROM segments WHERE path=?", (str(path),))
-                batch = []
-                for window in windows(path, encoder.sample_rate, seconds, hop):
-                    batch.append(window)
-                    if len(batch) == 4:
-                        _insert_batch(db, path, batch, encoder)
-                        batch = []
-                if batch:
-                    _insert_batch(db, path, batch, encoder)
+                seen = set()
+                for width, stride in [(seconds, hop), *[(s, s / 2) for s in scales if s != seconds]]:
+                    batch = []
+                    for window in windows(path, encoder.sample_rate, width, stride):
+                        interval = (window.start, window.end)
+                        if interval in seen:
+                            continue
+                        seen.add(interval)
+                        batch.append(window)
+                        if len(batch) == 4:
+                            progress(f"Embedding {path.name}: {window.end:.1f}s / {width:g}s windows")
+                            _insert_batch(db, path, batch, encoder, cache_dir, sha)
+                            batch = []
+                    if batch:
+                        progress(f"Embedding {path.name}: final {width:g}s windows")
+                        _insert_batch(db, path, batch, encoder, cache_dir, sha)
                 db.execute("INSERT OR REPLACE INTO files VALUES (?,?)", (str(path), sha))
             live = {str(p) for p in files}
             for stale in set(existing) - live:
@@ -67,10 +82,19 @@ def build_index(folder, database, encoder, seconds=10, hop=5, progress=lambda ms
         db.close()
 
 
-def _insert_batch(db, path, batch, encoder):
-    vectors = normalize(encoder.encode_audio([w.samples for w in batch]))
-    if vectors.ndim != 2 or len(vectors) != len(batch):
+def _insert_batch(db, path, batch, encoder, cache_dir, sha):
+    key = digest({"sha": sha, "encoder": encoder.identity,
+                  "intervals": [(w.start, w.end) for w in batch], "policy": "index-v1"})
+    cache = cache_dir / f"{key}.npz"
+    if cache.exists():
+        with np.load(cache, allow_pickle=False) as saved:
+            vectors = saved["vectors"]
+    else:
+        vectors = normalize(encoder.encode_audio([w.samples for w in batch]))
+    if vectors.ndim != 2 or len(vectors) != len(batch) or not np.isfinite(vectors).all():
         raise ValueError("Encoder returned an invalid embedding batch")
+    if not cache.exists():
+        save_npz(cache, vectors=vectors)
     for window, vector in zip(batch, vectors):
         db.execute("INSERT INTO segments(path,start,end,vector) VALUES (?,?,?,?)",
                    (str(path), window.start, window.end, vector.astype(np.float32).tobytes()))
@@ -90,9 +114,12 @@ def index_info(database):
         db.close()
 
 
-def search(database, encoder, query, limit=10):
+def search(database, encoder, query, limit=10, *, min_score=None, name_filter="", unique_files=False,
+           similar_to=None):
     if not str(query).strip() or not 1 <= limit <= 100:
         raise ValueError("Enter a query and a result limit between 1 and 100")
+    if min_score is not None and not -1 <= float(min_score) <= 1:
+        raise ValueError("Minimum similarity must be between -1 and 1")
     if not Path(database).exists():
         raise ValueError("Index does not exist")
     db = connect(Path(database))
@@ -106,12 +133,24 @@ def search(database, encoder, query, limit=10):
     if not rows:
         return []
     matrix = np.stack([np.frombuffer(row["vector"], dtype=np.float32) for row in rows])
-    q = normalize(encoder.encode_text([query]))[0]
+    if similar_to is None:
+        q = normalize(encoder.encode_text([query]))[0]
+    else:
+        selected = next((i for i, row in enumerate(rows) if row["id"] == int(similar_to)), None)
+        if selected is None:
+            raise ValueError("Unknown source segment")
+        q = normalize(matrix[selected])
     scores = matrix @ q
     results = []
     # Greedy temporal suppression prevents overlapping windows from crowding the list.
     for i in np.argsort(-scores, kind="stable"):
         row = rows[int(i)]
+        if row["id"] == similar_to or name_filter.casefold() not in row["path"].casefold():
+            continue
+        if min_score is not None and scores[i] < min_score:
+            continue
+        if unique_files and any(r["path"] == row["path"] for r in results):
+            continue
         if any(r["path"] == row["path"] and
                min(r["end"], row["end"]) - max(r["start"], row["start"]) > 0 for r in results):
             continue
