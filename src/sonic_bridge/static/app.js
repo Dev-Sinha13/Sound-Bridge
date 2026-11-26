@@ -88,12 +88,14 @@ async function refresh() {
     if (state.synthetic) $('query').placeholder = 'A low, mid, or high tone…';
     renderReports(state.reports);
     const running = state.jobs.find(j => ['running', 'queued'].includes(j.status));
+    $('cancel-job').hidden = !running;
+    $('cancel-job').dataset.job = running ? running.id : '';
     busy(Boolean(running));
     if (activeJob) {
       const job = state.jobs.find(j => j.id === activeJob);
       if (job) {
         status(`${job.kind}: ${job.message}${job.seconds !== undefined ? ` · ${job.seconds}s` : ''}`, job.status === 'failed');
-        if (job.status === 'complete' || job.status === 'failed') {
+        if (['complete', 'failed', 'cancelled'].includes(job.status)) {
           if (job.kind === 'search' && job.status === 'complete') renderResults(job.result);
           activeJob = null;
         }
@@ -115,6 +117,10 @@ $('experiment-form').onsubmit = event => {
   submit('/api/experiment', {name: $('run-name').value, manifest: $('manifest').value,
     backend: $('experiment-backend').value, config: $('experiment-backend').value === 'jepa' ? $('experiment-config').value : null,
     budgets: $('budgets').value.split(',').map(Number)});
+};
+$('cancel-job').onclick = async () => {
+  try { await request('/api/cancel', {job: $('cancel-job').dataset.job}); status('Cancellation requested; finishing the current model operation.'); }
+  catch (error) { status(error.message, true); }
 };
 $('demo').onclick = async () => { try { const fixture = await request('/api/demo', {}); $('folder').value = fixture.folder; $('manifest').value = fixture.manifest; $('budgets').value = '6,12,18'; $('name').value = 'tones'; status(fixture.note); } catch (error) { status(error.message, true); } };
 document.querySelectorAll('.tab').forEach(button => button.onclick = () => { document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b === button)); $('search-view').hidden = button.dataset.view !== 'search'; $('research-view').hidden = button.dataset.view !== 'research'; });

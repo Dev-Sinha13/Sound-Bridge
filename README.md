@@ -128,6 +128,20 @@ The bundle records the map's SHA-256, which the loader verifies. The Alignment l
 
 Both methods use the same manifest and gallery. `comparison.json` retains provenance, all seed/budget results, confidence intervals and runtime. A validation-selected JEPA bundle is exported automatically. Calibration sample counts exclude the encoders' pretraining data and therefore cannot be interpreted as total training-data savings over CLAP.
 
+Add `--parallel` to run the independent CLAP and JEPA extraction jobs concurrently. The release evaluation uses a clearly labeled 1,000/200/200 train/validation/test pilot with calibration budgets 100/500/1,000 and three seeds; it is not the full Clotho benchmark. `--wait-for-extraction` can wait for an ongoing verified download before starting. `scripts/precompute_clotho_split.py` can cache a completed split while the other archives download, using the same deterministic subset selection as the benchmark.
+
+### Separate fixed-prompt sound classification
+
+```powershell
+.\.venv\Scripts\python.exe scripts/download_esc50.py
+.\.venv\Scripts\python.exe scripts/evaluate_esc50.py --backend clap --output artifacts/esc50-clap.json --calibration-manifest artifacts/clotho-pilot/manifest.jsonl --alignment-metadata artifacts/clotho-pilot/selected-bundle/alignment.json
+.\.venv\Scripts\python.exe scripts/evaluate_esc50.py --backend aligned --config artifacts/clotho-pilot/selected-bundle/config.json --output artifacts/esc50-jepa.json --calibration-manifest artifacts/clotho-pilot/manifest.jsonl
+```
+
+This evaluates ESC-50 fold 5 with three fixed prompt templates and no fitting on ESC-50. Matching Freesound source IDs from the chosen bridge's calibration set are excluded from **both** comparisons. The default fold and prompts must be set before examining results. The audio is downloaded from a pinned official Git revision, CRC-checked, and tracked by archive SHA-256. Dataset and encoder pretraining overlap remains unknown, so this is a separate-dataset transfer check rather than proof of unseen-source or unseen-class generalization.
+
+Long browser jobs can be cancelled at the next processing checkpoint. Completed embedding caches are retained; a cancelled index build rolls back when cancellation is observed before its commit. A running model operation must finish before cancellation is processed.
+
 ```powershell
 .\.venv\Scripts\python.exe -m sonic_bridge serve --backend aligned --config configs/jepa.json
 ```

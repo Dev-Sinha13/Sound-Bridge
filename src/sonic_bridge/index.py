@@ -59,6 +59,7 @@ def build_index(folder, database, encoder, seconds=10, hop=5, progress=lambda ms
             for stale in set(existing) - live:
                 db.execute("DELETE FROM segments WHERE path=?", (stale,))
                 db.execute("DELETE FROM files WHERE path=?", (stale,))
+            progress("Saving index")
             db.execute("INSERT OR REPLACE INTO meta VALUES ('settings',?)", (json.dumps(settings),))
         return {"files": len(files), "changed": changed,
                 "segments": db.execute("SELECT COUNT(*) FROM segments").fetchone()[0]}

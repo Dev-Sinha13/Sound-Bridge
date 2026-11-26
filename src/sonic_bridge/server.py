@@ -23,6 +23,10 @@ from .index import build_index, index_info, search, segment
 from .util import read_json
 
 
+class JobCancelled(Exception):
+    pass
+
+
 class Application:
     def __init__(self, workspace, backend="clap", config=None, device="cpu", offline=False):
         self.workspace = Path(workspace).resolve()
@@ -32,6 +36,7 @@ class Application:
         self.pool = ThreadPoolExecutor(max_workers=1)
         self.lock = threading.Lock()
         self.jobs = {}
+        self.cancel_signals = {}
         self.token = secrets.token_urlsafe(32)
 
     def get_encoder(self):
@@ -53,8 +58,11 @@ class Application:
                 raise ValueError("Another job is running. Wait for it to finish.")
             key = secrets.token_hex(8)
             self.jobs[key] = {"id": key, "kind": kind, "status": "queued", "message": "Queued"}
+            self.cancel_signals[key] = threading.Event()
 
         def progress(message):
+            if self.cancel_signals[key].is_set():
+                raise JobCancelled()
             with self.lock:
                 self.jobs[key]["message"] = message
 
@@ -63,9 +71,15 @@ class Application:
             with self.lock:
                 self.jobs[key]["status"] = "running"
             try:
+                progress("Starting")
                 result = callback(progress)
+                if self.cancel_signals[key].is_set():
+                    raise JobCancelled()
                 with self.lock:
                     self.jobs[key].update(status="complete", result=result, message="Complete")
+            except JobCancelled:
+                with self.lock:
+                    self.jobs[key].update(status="cancelled", message="Cancelled; completed embedding caches are retained")
             except Exception as e:  # noqa: BLE001 - report arbitrary model/runtime failures to the job UI
                 traceback.print_exc()
                 with self.lock:
@@ -76,6 +90,16 @@ class Application:
 
         self.pool.submit(run)
         return {"job": key}
+
+    def cancel(self, key):
+        with self.lock:
+            if key not in self.jobs:
+                raise ValueError("Unknown job")
+            if self.jobs[key]["status"] not in {"queued", "running"}:
+                raise ValueError("Job has already finished")
+            self.cancel_signals[key].set()
+            self.jobs[key]["message"] = "Cancellation requested; finishing the current model operation"
+        return {"job": key, "cancellation_requested": True}
 
     def state(self):
         with self.lock:
@@ -156,6 +180,8 @@ def make_handler(app):
                     raise TypeError("Request body must be a JSON object")
                 if self.path in {"/api/index", "/api/search"} and app.backend == "jepa":
                     raise ValueError("Raw JEPA features are not aligned. Run an experiment and export a bridge first.")
+                if self.path == "/api/cancel":
+                    return self.respond(app.cancel(body["job"]))
                 if self.path == "/api/index":
                     folder, database = Path(body["folder"]).resolve(), app.database(body["name"])
                     seconds, hop = float(body.get("window", 10)), float(body.get("hop", 5))

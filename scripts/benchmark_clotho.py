@@ -2,6 +2,8 @@
 import argparse
 import json
 import os
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 os.environ.setdefault("OMP_NUM_THREADS", "4")
@@ -23,26 +25,46 @@ parser.add_argument("--seeds", type=int, nargs="+", default=[7, 23, 42])
 parser.add_argument("--limits", type=int, nargs=3, metavar=("TRAIN", "VAL", "TEST"))
 parser.add_argument("--backend", choices=["both", "clap", "jepa"], default="both")
 parser.add_argument("--offline", action="store_true")
+parser.add_argument("--parallel", action="store_true", help="Run the two independent backends concurrently")
+parser.add_argument("--wait-for-extraction", action="store_true", help="Wait for an ongoing verified dataset download")
 args = parser.parse_args()
 args.output.mkdir(parents=True, exist_ok=True)
 progress = lambda msg: print(msg, flush=True)
+if args.limits and any(n < 1 for n in args.limits):
+    raise ValueError("Subset counts must be positive")
+if args.wait_for_extraction:
+    while not all((args.dataset / f".{part}.extracted").exists()
+                  for part in ["development", "validation", "evaluation"]):
+        progress("Waiting for verified Clotho archive extraction")
+        time.sleep(30)
 provenance = prepare_clotho(args.dataset, output=args.output / "manifest.jsonl",
                             limits=dict(zip(["train", "val", "test"], args.limits)) if args.limits else None,
                             progress=progress)
 reports = {}
-for backend in (["clap", "jepa"] if args.backend == "both" else [args.backend]):
+
+
+def benchmark(backend):
     print(f"Loading {backend}", flush=True)
     encoder = make_encoder(backend, args.config if backend == "jepa" else None, offline=args.offline)
     encoder.torch.set_num_threads(4)
-    reports[backend] = run_experiment(provenance["manifest"], encoder, args.output / backend,
-                                      budgets=args.budgets, seeds=args.seeds,
-                                      methods=["native"] if backend == "clap" else ["procrustes", "ridge"],
-                                      cache_dir=args.dataset / "embedding-cache" / backend, progress=progress)
+    report = run_experiment(provenance["manifest"], encoder, args.output / backend,
+                            budgets=args.budgets, seeds=args.seeds,
+                            methods=["native"] if backend == "clap" else ["procrustes", "ridge"],
+                            cache_dir=args.dataset / "embedding-cache" / backend, progress=progress)
     del encoder
     if backend == "jepa":
         bundle = args.output / "selected-bundle"
         if not bundle.exists():
             export_alignment(args.output / "jepa", bundle)
+    return backend, report
+
+
+backends = ["clap", "jepa"] if args.backend == "both" else [args.backend]
+if args.parallel:
+    with ThreadPoolExecutor(max_workers=len(backends)) as pool:
+        reports.update(pool.map(benchmark, backends))
+else:
+    reports.update(benchmark(backend) for backend in backends)
 if len(reports) == 2:
     comparison = {"dataset": provenance, "reports": reports,
                   "chance_text_to_audio_recall@1": 1 / provenance["splits"]["test"],

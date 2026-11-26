@@ -53,3 +53,21 @@ def test_raw_jepa_cannot_search_and_invalid_json_is_reported(live_server):
         with pytest.raises(urllib.error.HTTPError) as failure:
             urllib.request.urlopen(req)
         assert failure.value.code == 400
+
+
+def test_job_cancellation_is_cooperative_and_recorded(tmp_path):
+    app = Application(tmp_path, backend="demo")
+    entered, release = threading.Event(), threading.Event()
+
+    def callback(progress):
+        entered.set()
+        release.wait(timeout=5)
+        progress("Checkpoint")
+        return {"unexpected": "completion"}
+
+    key = app.submit("experiment", callback)["job"]
+    assert entered.wait(timeout=5)
+    assert app.cancel(key)["cancellation_requested"]
+    release.set()
+    app.pool.shutdown(wait=True)
+    assert app.jobs[key]["status"] == "cancelled"
