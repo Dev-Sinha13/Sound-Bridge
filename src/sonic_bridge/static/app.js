@@ -1,6 +1,8 @@
 let state = null;
 let activeJob = null;
 let polling = false;
+let reportsKey = '';
+let backendInitialized = false;
 const $ = id => document.getElementById(id);
 const el = (tag, text, cls) => { const n = document.createElement(tag); if (text !== undefined) n.textContent = text; if (cls) n.className = cls; return n; };
 function status(message, error = false) { $('status').textContent = message; $('status').classList.toggle('error', error); }
@@ -28,6 +30,9 @@ function renderResults(result) {
   }
 }
 function renderReports(reports) {
+  const key = JSON.stringify(reports);
+  if (key === reportsKey) return;
+  reportsKey = key;
   if (!reports.length) return;
   $('reports').replaceChildren();
   for (const report of reports) {
@@ -42,20 +47,39 @@ function renderReports(reports) {
       table.append(row);
     }
     wrap.append(table); block.append(wrap); $('reports').append(block);
+    if (report.selected_artifact) {
+      block.append(el('p', `Selected on validation: ${report.selected_artifact}`));
+      if (report.encoder.backend === 'jepa') {
+        const button = el('button', 'Export selected alignment', 'secondary');
+        button.onclick = async () => {
+          try { const result = await request('/api/export-alignment', {experiment: report.name}); status(`Exported config: ${result.config}`); }
+          catch (error) { status(error.message, true); }
+        };
+        block.append(button);
+      }
+    }
   }
 }
-function busy(value) { document.querySelectorAll('form button, #demo').forEach(b => b.disabled = value); }
+function busy(value) {
+  document.querySelectorAll('form button, #demo').forEach(b => b.disabled = value);
+  if (state && !state.can_search) document.querySelectorAll('#search-view form button').forEach(b => b.disabled = true);
+}
 async function refresh() {
   if (polling) return; polling = true;
   try {
     state = await request('/api/state');
     $('mode').textContent = state.synthetic ? 'SYNTHETIC DEMO / Only low, mid, and high tone queries are supported. This verifies the pipeline; it is not a semantic audio model.' : `${state.backend.toUpperCase()} / Local inference · ${state.offline ? 'cached models only' : 'model files may download on first use'} · similarity scores are not probabilities`;
     $('demo').hidden = !state.synthetic;
+    if (!backendInitialized) {
+      $('experiment-backend').value = state.synthetic ? 'demo' : state.backend === 'aligned' ? 'jepa' : state.backend;
+      $('experiment-config').value = state.default_config;
+      backendInitialized = true;
+    }
     const selected = $('collection').value;
     const compatible = state.indexes.filter(i => i.settings && i.settings.encoder.backend === state.backend);
     $('collection').replaceChildren(...compatible.map(i => { const o = el('option', `${i.name} · ${i.files} recordings · ${i.segments} windows`); o.value = i.name; return o; }));
     if (compatible.some(i => i.name === selected)) $('collection').value = selected;
-    if (!compatible.length) $('collection').append(el('option', 'No collections yet'));
+    if (!compatible.length) { const option = el('option', 'No collections yet'); option.value = ''; $('collection').append(option); }
     if (!$('suggestions').children.length) {
       for (const text of state.synthetic ? ['low tone', 'mid tone', 'high tone'] : ['Rain and thunder', 'A dog barking', 'Metal scraping']) {
         const button = el('button', text); button.type = 'button'; button.onclick = () => { $('query').value = text; }; $('suggestions').append(button);
@@ -85,8 +109,13 @@ async function submit(url, body) {
   catch (error) { status(error.message, true); busy(false); }
 }
 $('index-form').onsubmit = event => { event.preventDefault(); submit('/api/index', {folder: $('folder').value, name: $('name').value, window: Number($('window').value), hop: Number($('hop').value)}); };
-$('search-form').onsubmit = event => { event.preventDefault(); if (!state.indexes.length) return status('Index a collection first.', true); submit('/api/search', {index: $('collection').value, query: $('query').value}); };
-$('experiment-form').onsubmit = event => { event.preventDefault(); submit('/api/experiment', {name: $('run-name').value, manifest: $('manifest').value, budgets: $('budgets').value.split(',').map(Number)}); };
+$('search-form').onsubmit = event => { event.preventDefault(); if (!$('collection').value) return status('Index a compatible collection first.', true); submit('/api/search', {index: $('collection').value, query: $('query').value}); };
+$('experiment-form').onsubmit = event => {
+  event.preventDefault();
+  submit('/api/experiment', {name: $('run-name').value, manifest: $('manifest').value,
+    backend: $('experiment-backend').value, config: $('experiment-backend').value === 'jepa' ? $('experiment-config').value : null,
+    budgets: $('budgets').value.split(',').map(Number)});
+};
 $('demo').onclick = async () => { try { const fixture = await request('/api/demo', {}); $('folder').value = fixture.folder; $('manifest').value = fixture.manifest; $('budgets').value = '6,12,18'; $('name').value = 'tones'; status(fixture.note); } catch (error) { status(error.message, true); } };
 document.querySelectorAll('.tab').forEach(button => button.onclick = () => { document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b === button)); $('search-view').hidden = button.dataset.view !== 'search'; $('research-view').hidden = button.dataset.view !== 'research'; });
 refresh(); setInterval(refresh, 1500);

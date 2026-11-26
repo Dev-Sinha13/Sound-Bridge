@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlparse
 import soundfile as sf
 
 from .audio import read_audio
+from .bundles import export_alignment
 from .demo import create_demo
 from .encoders import make_encoder
 from .experiments import run_experiment
@@ -36,6 +37,9 @@ class Application:
     def get_encoder(self):
         if self.encoder is None:
             self.encoder = make_encoder(self.backend, self.config, self.device, self.offline)
+            torch = getattr(self.encoder, "torch", getattr(getattr(self.encoder, "base", None), "torch", None))
+            if torch:
+                torch.set_num_threads(4)
         return self.encoder
 
     def database(self, name):
@@ -83,7 +87,8 @@ class Application:
             reports.append({"name": path.parent.name, **report})
         return {"backend": self.backend, "offline": self.offline, "workspace": str(self.workspace),
                 "synthetic": self.backend == "demo", "indexes": indexes, "jobs": jobs,
-                "reports": reports, "token": self.token}
+                "reports": reports, "token": self.token, "can_search": self.backend != "jepa",
+                "default_config": str(self.config or "configs/jepa.json")}
 
 
 def make_handler(app):
@@ -147,6 +152,10 @@ def make_handler(app):
                 if not 0 < length <= 65536 or self.headers.get_content_type() != "application/json":
                     raise ValueError("Expected a JSON request under 64 KB")
                 body = json.loads(self.rfile.read(length))
+                if not isinstance(body, dict):
+                    raise TypeError("Request body must be a JSON object")
+                if self.path in {"/api/index", "/api/search"} and app.backend == "jepa":
+                    raise ValueError("Raw JEPA features are not aligned. Run an experiment and export a bridge first.")
                 if self.path == "/api/index":
                     folder, database = Path(body["folder"]).resolve(), app.database(body["name"])
                     seconds, hop = float(body.get("window", 10)), float(body.get("hop", 5))
@@ -170,8 +179,28 @@ def make_handler(app):
                     if destination.exists():
                         raise ValueError("Experiment name already exists; choose a new name")
                     budgets = tuple(int(v) for v in body.get("budgets", [100, 500, 1000]))
-                    return self.respond(app.submit("experiment", lambda p: run_experiment(
-                        body["manifest"], app.get_encoder(), destination, budgets=budgets, progress=p)), 202)
+                    backend = body.get("backend", "jepa" if app.backend == "aligned" else app.backend)
+                    if backend not in {"demo", "clap", "jepa"}:
+                        raise ValueError("Choose CLAP or raw Audio-JEPA for an experiment")
+                    config = body.get("config") or app.config
+
+                    def experiment(progress):
+                        if backend == app.backend and config == app.config:
+                            encoder = app.get_encoder()
+                        else:
+                            encoder = make_encoder(backend, config, app.device, app.offline)
+                            if hasattr(encoder, "torch"):
+                                encoder.torch.set_num_threads(4)
+                        methods = ["native"] if backend == "clap" else ["procrustes", "ridge"]
+                        return run_experiment(body["manifest"], encoder, destination, budgets=budgets,
+                                              methods=methods, progress=progress,
+                                              cache_dir=app.workspace / "embedding-cache" / backend)
+                    return self.respond(app.submit("experiment", experiment), 202)
+                if self.path == "/api/export-alignment":
+                    name = body["experiment"]
+                    app.database(name)
+                    return self.respond(export_alignment(app.workspace / "experiments" / name,
+                                                         app.workspace / "bundles" / name))
                 return self.respond({"error": "Not found"}, 404)
             except (ValueError, KeyError, OSError, TypeError) as e:
                 return self.respond({"error": str(e)}, 400)
@@ -180,8 +209,6 @@ def make_handler(app):
 
 
 def serve(workspace, backend="clap", config=None, device="cpu", offline=False, port=8765):
-    if backend == "jepa":
-        raise ValueError("Raw JEPA spaces are not aligned. Train a map, then serve --backend aligned")
     app = Application(workspace, backend, config, device, offline)
     server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(app))
     print(f"Sonic Bridge: http://127.0.0.1:{server.server_port} | backend={backend}", flush=True)

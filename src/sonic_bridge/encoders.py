@@ -145,6 +145,8 @@ def make_encoder(backend, config_path=None, device="cpu", offline=False):
         artifact = Path(config["alignment"])
         if not artifact.is_absolute():
             artifact = Path(config_path).resolve().parent / artifact
+        if config.get("alignment_sha256") and file_digest(artifact) != config["alignment_sha256"]:
+            raise ValueError("Alignment artifact failed its SHA-256 integrity check")
         metadata = read_json(artifact.with_suffix(".json"))
         if metadata["encoder"] != base.identity:
             raise ValueError("Alignment was trained with different encoder revisions")

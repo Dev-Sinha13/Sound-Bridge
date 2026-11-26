@@ -42,3 +42,14 @@ def test_rejects_index_path_traversal(live_server):
     app, _ = live_server
     with pytest.raises(ValueError):
         app.database("../secret")
+
+
+def test_raw_jepa_cannot_search_and_invalid_json_is_reported(live_server):
+    app, base = live_server
+    app.backend = "jepa"
+    for body in [[], {"query": "dog", "index": "library"}]:
+        req = urllib.request.Request(base + "/api/search", data=json.dumps(body).encode(),
+                                     headers={"Content-Type": "application/json", "X-Sonic-Token": app.token})
+        with pytest.raises(urllib.error.HTTPError) as failure:
+            urllib.request.urlopen(req)
+        assert failure.value.code == 400

@@ -107,6 +107,27 @@ Select a run **using validation scores**, update `alignment` in the config to it
 
 Each experiment also copies the run with highest validation text-to-audio Recall@1 to `selected.npz`/`selected.json`. Ties use the first run in the declared method/budget/seed order. Test scores do not participate in this selection.
 
+Export a self-contained alignment bundle (map, provenance, pinned encoder configuration; encoder weights are cached separately):
+
+```powershell
+.\.venv\Scripts\python.exe -m sonic_bridge export-alignment artifacts/jepa --output data/bundles/jepa
+.\.venv\Scripts\python.exe -m sonic_bridge serve --backend aligned --config data/bundles/jepa/config.json --offline
+```
+
+The bundle records the map's SHA-256, which the loader verifies. The Alignment lab lets you choose CLAP for a native baseline or Audio-JEPA + MPNet for fitting, independently of the backend used for collection search. Completed JEPA experiments have an export button. Raw `--backend jepa` can open the research interface, but indexing/search is disabled until an alignment is fitted.
+
+### Reproduce the comparative benchmark
+
+```powershell
+# Official full split evaluation; CPU execution may take substantial time.
+.\.venv\Scripts\python.exe scripts/benchmark_clotho.py --offline
+
+# Explicitly labeled subset run for a shorter experiment.
+.\.venv\Scripts\python.exe scripts/benchmark_clotho.py --offline --limits 1000 200 200 --budgets 100 500 1000 --output artifacts/clotho-subset
+```
+
+Both methods use the same manifest and gallery. `comparison.json` retains provenance, all seed/budget results, confidence intervals and runtime. A validation-selected JEPA bundle is exported automatically. Calibration sample counts exclude the encoders' pretraining data and therefore cannot be interpreted as total training-data savings over CLAP.
+
 ```powershell
 .\.venv\Scripts\python.exe -m sonic_bridge serve --backend aligned --config configs/jepa.json
 ```

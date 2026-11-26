@@ -83,7 +83,7 @@ def download_verified(url, destination, checksum, progress=lambda msg: None):
 
 def download_clotho(output, progress=lambda msg: None):
     try:
-        import py7zr
+        import py7zr  # noqa: F401 - check the optional dependency before starting a large download
     except ImportError as e:
         raise RuntimeError('Install dataset dependencies: pip install -e ".[research]"') from e
     output = Path(output).resolve()
@@ -100,19 +100,29 @@ def download_clotho(output, progress=lambda msg: None):
         # Each result is consumed so a failed file never silently produces a partial manifest.
         list(pool.map(download, sorted(FILES.items(), key=lambda item: item[0].endswith(".7z"))))
     for part in ["development", "validation", "evaluation"]:
-        marker = output / f".{part}.extracted"
-        if marker.exists():
-            continue
-        progress(f"Extracting {part}")
-        archive = output / "downloads" / f"clotho_audio_{part}.7z"
-        with py7zr.SevenZipFile(archive) as seven:
-            for member in seven.list():
-                target = (output / member.filename).resolve()
-                if not target.is_relative_to(output) or getattr(member, "is_symlink", False):
-                    raise ValueError("Unsafe archive member")
-            seven.extractall(path=output)
-        marker.write_text(FILES[archive.name], encoding="utf-8")
+        extract_clotho_archive(output, part, progress)
     return prepare_clotho(output, progress=progress)
+
+
+def extract_clotho_archive(output, part, progress=lambda msg: None):
+    import py7zr
+    if part not in {"development", "validation", "evaluation"}:
+        raise ValueError("Invalid Clotho split")
+    output = Path(output).resolve()
+    marker = output / f".{part}.extracted"
+    if marker.exists():
+        return
+    progress(f"Extracting {part}")
+    archive = output / "downloads" / f"clotho_audio_{part}.7z"
+    if md5(archive) != FILES[archive.name]:
+        raise ValueError("Archive checksum failed before extraction")
+    with py7zr.SevenZipFile(archive) as seven:
+        for member in seven.list():
+            target = (output / member.filename).resolve()
+            if not target.is_relative_to(output) or getattr(member, "is_symlink", False):
+                raise ValueError("Unsafe archive member")
+        seven.extractall(path=output)
+    marker.write_text(FILES[archive.name], encoding="utf-8")
 
 
 def prepare_clotho(folder, output=None, limits=None, seed=2026, progress=lambda msg: None):
