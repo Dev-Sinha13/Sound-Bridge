@@ -30,6 +30,8 @@ python -m venv .venv
 
 Open **http://127.0.0.1:8765**. Enter an audio folder, name a collection, index it, then search. Initial model downloads need internet; subsequent runs can use `serve --offline`. Inference is local. CPU is the default; add `--device cuda` with a suitable PyTorch/CUDA installation. Model and dataset licenses apply separately.
 
+Use **Collections** to add folders and **Search sounds** to query an existing collection. **Change** in the desktop model panel (or **Models** on mobile) opens model settings. **Alignment lab** shows experiment summaries and expandable result tables. The layout, interaction choices and design references are documented in [design.md](docs/design.md).
+
 After installation, `./start.ps1` launches CLAP; `./start.ps1 -Backend demo` launches the fixture mode. `requirements-lock.txt` captures the development environment's exact package versions (Windows, Python 3.13); use the ranges in `pyproject.toml` for other platforms, and verify matching PyTorch audio/vision compatibility when changing versions.
 
 The app listens only on loopback. It does not upload audio, create transcripts, or call an inference API. Hugging Face model downloads occur on first use; model cache defaults to `.cache/huggingface` inside this project. Set `HF_HOME` to choose another cache. Indexes contain local paths and embeddings and should be treated as sensitive.

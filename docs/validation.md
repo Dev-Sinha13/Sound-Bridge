@@ -23,4 +23,10 @@ Real HTTP integration (`artifacts/validation/http-v2.json`) passed paper-crumpli
 
 The running app's offline model-switch API also loaded FineLAP, returned paper first for `paper crumpling` against its multi-scale example index, and restored CLAP successfully (`artifacts/validation/model-switch-v2.json`).
 
+## Workspace redesign
+
+The subsequent workspace redesign was verified in the live in-app browser at 1440×1000 and 390×844. Search returned the correct paper recording first; all ten returned audio players loaded finite durations without media errors. File filters reached the new empty state, and clearing them restored results. Collections, compact experiment summaries, the model dialog, Escape dismissal and arrow-key tab navigation were checked. The phone navigation and page had no horizontal overflow. Browser console warnings/errors were empty during this check. Temporary viewport overrides were reset afterward.
+
+The seven HTTP regression tests pass, along with JavaScript syntax checking, Ruff and `git diff --check`. Preview screenshots remain local in `artifacts/validation/ui-redesign-desktop.jpg` and `ui-redesign-mobile.jpg`. This browser verification supersedes the earlier visual-verification limitation for the updated controls.
+
 These checks establish runtime integration and numerical behavior. Completed real-data measurements are documented in [results.md](results.md). They do not establish total training-data efficiency relative to CLAP, anonymity, edge-device performance, or the theorem's assumptions. See the README for dataset manifests and reproducible experiment commands.
